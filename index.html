@@ -2,17 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Voice Room - Discord Style</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- PeerJS Public Cloud Broker for 100% reliable serverless WebRTC -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { background-color: #1e1f22; color: #dbdee1; font-family: sans-serif; }
+        body { 
+            background-color: #1e1f22; 
+            color: #dbdee1; 
+            font-family: sans-serif; 
+            /* Fix for Android mobile browser bottom navigation bars cutting off content */
+            height: 100dvh;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
     </style>
 </head>
-<body class="h-screen w-screen flex flex-col justify-between overflow-hidden">
+<body class="w-screen flex flex-col justify-between overflow-hidden">
 
     <!-- JOIN / LOGIN MODAL -->
     <div id="join-modal" class="fixed inset-0 z-50 bg-[#1e1f22] flex flex-col items-center justify-center p-6">
@@ -55,8 +61,8 @@
         </div>
     </div>
 
-    <!-- BOTTOM CONTROLS -->
-    <div class="h-20 bg-[#2b2d31] border-t border-[#3f4147] flex items-center justify-around px-4">
+    <!-- BOTTOM CONTROLS (Padded above Android navigation bar) -->
+    <div class="h-20 bg-[#2b2d31] border-t border-[#3f4147] flex items-center justify-around px-4 mb-safe">
         <button id="mute-btn" class="w-14 h-14 rounded-full bg-[#313338] hover:bg-[#40444b] text-white flex items-center justify-center text-xl shadow transition" title="Mute Yourself">
             <i class="fa-solid fa-microphone" id="mute-icon"></i>
         </button>
@@ -73,8 +79,8 @@
         let myName = localStorage.getItem('voice_room_username') || '';
         let myPeerId = '';
         let isMuted = false;
-        let activePeers = {}; // peerId -> { call, name, audioEl }
-        const ROOM_PREFIX = 'ffmic-room-v3-';
+        let activePeers = {}; 
+        const ROOM_PREFIX = 'ffmic-room-v4-';
 
         const joinModal = document.getElementById('join-modal');
         const usernameInput = document.getElementById('username-input');
@@ -143,7 +149,6 @@
         }
 
         function initPeerMesh() {
-            // Unique peer ID combining room prefix and user's chosen name
             myPeerId = ROOM_PREFIX + myName.toLowerCase();
 
             peer = new Peer(myPeerId, {
@@ -162,9 +167,6 @@
                 
                 addUserCard('local', myName, true);
                 updateOnlineCount();
-                
-                // Broadcast discovery to find other potential room members
-                startDiscoveryScan();
             });
 
             peer.on('call', (call) => {
@@ -180,33 +182,15 @@
                     joinBtn.disabled = false;
                     joinBtn.textContent = "Join Voice Channel";
                 } else {
-                    console.warn("Peer error:", err);
+                    statusBadge.textContent = "Reconnecting...";
+                    statusBadge.className = "text-[11px] px-2.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium";
                 }
             });
         }
 
-        // Periodically discover and call potential peers in the same room namespace
-        function startDiscoveryScan() {
-            // We scan common peer hashes or let users connect instantly by typing names.
-            // To make it automatic, we periodically check standard discovery pings.
-            window.discoveryInterval = setInterval(() => {
-                // Keep mesh alive
-            }, 5000);
-        }
-
-        // Allow connecting to other participants by typing or scanning
-        window.connectToPeerByName = function(targetName) {
-            if (!targetName || targetName === myName) return;
-            const targetPeerId = ROOM_PREFIX + targetName.toLowerCase();
-            if (activePeers[targetPeerId]) return;
-
-            const call = peer.call(targetPeerId, localStream);
-            setupCallHandlers(call, targetName);
-        };
-
-        function setupCallHandlers(call, forcedName = null) {
+        function setupCallHandlers(call) {
             const remotePeerId = call.peer;
-            const remoteName = forcedName || remotePeerId.replace(ROOM_PREFIX, '');
+            const remoteName = remotePeerId.replace(ROOM_PREFIX, '');
 
             call.on('stream', (remoteStream) => {
                 playRemoteAudio(remotePeerId, remoteStream);
@@ -319,5 +303,5 @@
         });
     </script>
 </body>
-    </html>
-    
+            </html>
+            
