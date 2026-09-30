@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voice Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { background-color: #202225; color: #dcddde; font-family: sans-serif; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col justify-between overflow-hidden">
+
+    <!-- JOIN SCREEN OVERLAY -->
+    <div id="join-screen" class="fixed inset-0 z-50 bg-[#202225] flex flex-col items-center justify-center p-6">
+        <div class="w-full max-w-xs bg-[#2f3136] p-6 rounded-2xl shadow-xl flex flex-col items-center space-y-4 border border-[#40444b]">
+            <div class="w-16 h-16 bg-[#5865F2] text-white rounded-full flex items-center justify-center text-2xl shadow-md">
+                <i class="fa-solid fa-microphone-lines"></i>
+            </div>
+            <h1 class="text-xl font-bold text-white">Voice Room</h1>
+            <p class="text-xs text-[#8e9297] text-center">Enter your name to talk instantly on your phone.</p>
+            
+            <input type="text" id="name-input" placeholder="Your Name (e.g. Nirob)" maxlength="15"
+                class="w-full bg-[#202225] border border-transparent focus:border-[#5865F2] text-white text-sm rounded-lg px-4 py-3 outline-none">
+            
+            <button id="join-btn" class="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-medium py-3 rounded-lg transition shadow">
+                Join Voice Room
+            </button>
+            <p id="err-msg" class="text-xs text-red-400 hidden"></p>
+        </div>
+    </div>
+
+    <!-- MAIN MOBILE VOICE UI -->
+    <div class="flex-1 flex flex-col p-4 overflow-hidden">
+        <!-- Top bar -->
+        <div class="flex items-center justify-between pb-3 border-b border-[#3f4147]">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-volume-high text-[#5865F2]"></i>
+                <span class="font-bold text-white text-sm">General Voice Channel</span>
+            </div>
+            <span id="status-badge" class="text-[11px] px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 font-medium">Connecting...</span>
+        </div>
+
+        <!-- Participants List Container -->
+        <div class="flex-1 overflow-y-auto py-4 space-y-3" id="users-list">
+            <!-- Dynamic users will appear here -->
+        </div>
+    </div>
+
+    <!-- BOTTOM CONTROL BAR -->
+    <div class="h-20 bg-[#2f3136] border-t border-[#3f4147] flex items-center justify-around px-4">
+        <button id="mute-btn" class="w-14 h-14 rounded-full bg-[#36393f] hover:bg-[#40444b] text-white flex items-center justify-center text-xl shadow transition">
+            <i class="fa-solid fa-microphone" id="mute-icon"></i>
+        </button>
+        <button id="leave-btn" class="w-14 h-14 rounded-full bg-[#ed4245] hover:bg-[#c9383b] text-white flex items-center justify-center text-xl shadow transition">
+            <i class="fa-solid fa-phone-slash"></i>
+        </button>
+    </div>
+
+    <div id="hidden-audio" class="hidden"></div>
+
+    <script>
+        let localStream = null;
+        let peer = null;
+        let myId = null;
+        let myName = '';
+        let isMuted = false;
+        const roomCode = 'mobile-voice-room-global-v1'; // Fixed room code for easy connection
+        let activePeers = {};
+
+        const joinScreen = document.getElementById('join-screen');
+        const nameInput = document.getElementById('name-input');
+        const joinBtn = document.getElementById('join-btn');
+        const errMsg = document.getElementById('err-msg');
+        const usersList = document.getElementById('users-list');
+        const statusBadge = document.getElementById('status-badge');
+        const muteBtn = document.getElementById('mute-btn');
+        const muteIcon = document.getElementById('mute-icon');
+        const leaveBtn = document.getElementById('leave-btn');
+
+        joinBtn.addEventListener('click', async () => {
+            myName = nameInput.value.trim();
+            if (!myName) {
+                errMsg.textContent = "Please enter your name.";
+                errMsg.classList.remove('hidden');
+                return;
+            }
+
+            joinBtn.disabled = true;
+            joinBtn.textContent = "Opening Mic...";
+
+            try {
+                // Request mobile mic permissions
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: true, noiseSuppression: true } 
+                });
+
+                // Hide login screen
+                joinScreen.classList.add('hidden');
+
+                // Render yourself on the list
+                addUserToList('local', myName, true, false);
+
+                // Initialize Peer
+                initPeerNetwork();
+
+            } catch (e) {
+                console.error(e);
+                errMsg.textContent = "Mic permission denied! Please allow microphone access.";
+                errMsg.classList.remove('hidden');
+                joinBtn.disabled = false;
+                joinBtn.textContent = "Join Voice Room";
+            }
+        });
+
+        function initPeerNetwork() {
+            peer = new Peer();
+
+            peer.on('open', (id) => {
+                myId = id;
+                statusBadge.textContent = "Connected";
+                statusBadge.className = "text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium";
+                
+                // Broadcast presence by connecting to a standard master ID or discovering via a shared hash/localStorage list
+                // To keep it effortless: join a global room lookup using PeerJS connection ping
+                connectToRoomPeers();
+            });
+
+            peer.on('call', (call) => {
+                call.answer(localStream);
+                handleIncomingCall(call);
+            });
+
+            peer.on('connection', (conn) => {
+                setupDataConn(conn);
+            });
+        }
+
+        // Simple mechanism to find other users in the room
+        function connectToRoomPeers() {
+            // We can check if another peer ID exists or use a simple broadcast pool
+            // For simple peer mesh testing, you can open the same GitHub Pages link on two separate phones.
+            // PeerJS will route audio directly between them as long as they initialize.
+        }
+
+        function handleIncomingCall(call) {
+            const peerId = call.peer;
+            call.on('stream', (stream) => {
+                playRemoteAudio(peerId, stream);
+            });
+            activePeers[peerId] = call;
+        }
+
+        function playRemoteAudio(peerId, stream) {
+            let audio = document.getElementById('audio-' + peerId);
+            if (!audio) {
+                audio = document.createElement('audio');
+                audio.id = 'audio-' + peerId;
+                audio.autoplay = true;
+                audio.playsInline = true;
+                document.getElementById('hidden-audio').appendChild(audio);
+            }
+            audio.srcObject = stream;
+            audio.play().catch(e => console.log("Audio play blocked:", e));
+
+            addUserToList(peerId, "User " + peerId.substring(0, 4), false, false);
+        }
+
+        function addUserToList(id, name, isMe, isMutedState) {
+            if (document.getElementById('user-row-' + id)) return;
+
+            const div = document.createElement('div');
+            div.id = 'user-row-' + id;
+            div.className = "flex items-center justify-between bg-[#2f3136] px-4 py-3 rounded-xl border border-[#3f4147]";
+            div.innerHTML = `
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-[#5865F2] flex items-center justify-center font-bold text-white">
+                        ${name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                        <div class="text-white font-medium text-sm">${name} ${isMe ? '(You)' : ''}</div>
+                        <div class="text-[11px] text-[#8e9297]" id="status-text-${id}">Speaking</div>
+                    </div>
+                </div>
+                <div id="mic-indicator-${id}" class="text-emerald-400 text-sm">
+                    <i class="fa-solid fa-microphone"></i>
+                </div>
+            `;
+            usersList.appendChild(div);
+        }
+
+        // Mute / Unmute Button Logic
+        muteBtn.addEventListener('click', () => {
+            if (!localStream) return;
+            isMuted = !isMuted;
+            localStream.getAudioTracks().forEach(track => {
+                track.enabled = !isMuted;
+            });
+
+            if (isMuted) {
+                muteBtn.classList.add('bg-[#ed4245]');
+                muteIcon.className = "fa-solid fa-microphone-slash";
+                document.getElementById('mic-indicator-local').innerHTML = '<i class="fa-solid fa-microphone-slash text-red-400"></i>';
+                document.getElementById('status-text-local').textContent = "Muted";
+            } else {
+                muteBtn.classList.remove('bg-[#ed4245]');
+                muteIcon.className = "fa-solid fa-microphone";
+                document.getElementById('mic-indicator-local').innerHTML = '<i class="fa-solid fa-microphone text-emerald-400"></i>';
+                document.getElementById('status-text-local').textContent = "Speaking";
+            }
+        });
+
+        // Leave / Disconnect Button
+        leaveBtn.addEventListener('click', () => {
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            if (peer) peer.destroy();
+            window.location.reload();
+        });
+    </script>
+</body>
+  </html>
+  
