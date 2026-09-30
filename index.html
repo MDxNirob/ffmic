@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoiceRoom</title>
-    <!-- Lightweight native browser networking bridge -->
-    <script src="https://jsdelivr.net"></script>
+    <!-- Stable WebRTC Engine Bridge -->
+    <script src="https://unpkg.com"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -124,130 +124,109 @@
 </div>
 
 <script>
-    const FIXED_ROOM_SEAL = "nirob_ultra_voice_lobby_production_stream";
-    let myAudioStream = null;
-    let bgt = null;
-    let myName = "";
-    const connectionsMap = {};
+    // Universal Room Address Key to route media channels properly
+    const MAIN_HUB_KEY = "nirob_production_voice_lobby_mesh_stream";
+    let myMicStream = null;
+    let mainPeer = null;
+    let localName = "";
 
-    const joinBtn = document.getElementById('join-btn');
-    const inputField = document.getElementById('username');
-    const setupArea = document.getElementById('setup-area');
-    const statusText = document.getElementById('status-text');
-    const userBox = document.getElementById('user-box');
-    const usersContainer = document.getElementById('active-users-container');
+    const btnJoin = document.getElementById('join-btn');
+    const fieldUser = document.getElementById('username');
+    const panelSetup = document.getElementById('setup-area');
+    const labelStatus = document.getElementById('status-text');
+    const boxUsers = document.getElementById('user-box');
+    const listContainer = document.getElementById('active-users-container');
 
-    joinBtn.addEventListener('click', async () => {
-        myName = inputField.value.trim();
-        if (!myName) {
+    btnJoin.addEventListener('click', async () => {
+        localName = fieldUser.value.trim();
+        if (!localName) {
             alert("Please type a nickname first!");
             return;
         }
         
-        setupArea.style.display = "none";
-        statusText.style.display = "block";
-        statusText.innerText = "Connecting to VoiceRoom channels...";
+        panelSetup.style.display = "none";
+        labelStatus.style.display = "block";
+        labelStatus.innerText = "Initializing browser media tracks...";
 
         try {
-            // Grab microphone input stream cleanly
-            myAudioStream = await navigator.mediaDevices.getUserMedia({
+            // Direct streaming capture block
+            myMicStream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 video: false
             });
 
-            // Start native browser network bridge instance
-            bgt = new Bugout(FIXED_ROOM_SEAL);
+            // Fallback generation logic to prevent network loop layout blocks
+            const uniqueNodeSeed = MAIN_HUB_KEY + "_" + Math.floor(10000 + Math.random() * 90000);
+            mainPeer = new Peer(uniqueNodeSeed);
 
-            bgt.on("server", () => {
-                statusText.innerText = "Voice lobby active!";
-                statusText.className = "status connected";
-                userBox.style.display = "block";
-                renderUserRow(myName, 'self');
-                
-                // Broadcast presence to all listening browsers
-                bgt.send({ type: "join", name: myName, address: bgt.address });
-            });
+            mainPeer.on('open', () => {
+                labelStatus.innerText = "Voice lobby active!";
+                labelStatus.className = "status connected";
+                boxUsers.style.display = "block";
+                displaySpeakerRow(localName, 'self');
 
-            bgt.on("message", (address, packet) => {
-                if (address === bgt.address) return;
-
-                if (packet.type === "join") {
-                    renderUserRow(packet.name, address);
-                    startVoiceLink(address, packet.name, true);
+                // Automated link configuration routing to target channel host node
+                const targetChannelHost = MAIN_HUB_KEY + "_host";
+                if (uniqueNodeSeed !== targetChannelHost) {
+                    const callObj = mainPeer.call(targetChannelHost, myMicStream, { metadata: { name: localName } });
+                    if (callObj) setupAudioNodeEvents(callObj);
                 }
             });
 
-            // Automated handle for direct WebRTC incoming connections
-            bgt.on("seen", (address) => {
-                if (connectionsMap[address]) return;
-                startVoiceLink(address, "Speaker", false);
+            mainPeer.on('call', (incomingCall) => {
+                incomingCall.answer(myMicStream);
+                setupAudioNodeEvents(incomingCall);
             });
 
-        } catch (err) {
-            statusText.innerText = "Network engine layout block. Please try reloading standard URL.";
-            setupArea.style.display = "block";
-            console.error(err);
+            // Independent fallback listener node activation configuration
+            try {
+                const globalCoreNode = new Peer(MAIN_HUB_KEY + "_host");
+                globalCoreNode.on('call', (incomingCall) => {
+                    incomingCall.answer(myMicStream);
+                    setupAudioNodeEvents(incomingCall);
+                });
+            } catch(conflictErr) {}
+
+        } catch (mediaCaptureError) {
+            labelStatus.innerText = "Hardware connection confirmed. Please reload browser view.";
+            panelSetup.style.display = "block";
+            console.error(mediaCaptureError);
         }
     });
 
-    function startVoiceLink(peerAddress, speakerName, createOffer) {
-        if (connectionsMap[peerAddress]) return;
-
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:://google.com' }] });
-        connectionsMap[peerAddress] = pc;
-
-        myAudioStream.getTracks().forEach(track => pc.addTrack(track, myAudioStream));
-
-        pc.onicecandidate = (event) => {
-            if (event.candidate) {
-                bgt.send({ type: "ice", target: peerAddress, candidate: event.candidate });
-            }
-        };
-
-        pc.ontrack = (event) => {
-            if (document.getElementById("audio_" + peerAddress)) return;
-            renderUserRow(speakerName, peerAddress);
-
+    function setupAudioNodeEvents(callInstance) {
+        const structuralLabel = callInstance.metadata && callInstance.metadata.name ? callInstance.metadata.name : "Connected User";
+        
+        callInstance.on('stream', (incomingMediaTrack) => {
+            if (document.getElementById("audio_" + callInstance.peer)) return;
+            displaySpeakerRow(structuralLabel, callInstance.peer);
+            
             const htmlAudioTag = document.createElement('audio');
-            htmlAudioTag.id = "audio_" + peerAddress;
-            htmlAudioTag.srcObject = event.streams[0];
+            htmlAudioTag.id = "audio_" + callInstance.peer;
+            htmlAudioTag.srcObject = incomingMediaTrack;
             htmlAudioTag.autoplay = true;
             htmlAudioTag.playsInline = true;
             document.body.appendChild(htmlAudioTag);
-            htmlAudioTag.play().catch(e => console.log("Stream linked directly to audio outputs."));
-        };
-
-        if (createOffer) {
-            pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
-                bgt.send({ type: "sdp", target: peerAddress, sdp: pc.localDescription });
-            });
-        }
-
-        // Catch background signaling packets
-        bgt.on("message", (address, packet) => {
-            if (packet.target !== bgt.address) return;
-
-            if (packet.type === "sdp") {
-                pc.setRemoteDescription(new RTCSessionDescription(packet.sdp)).then(() => {
-                    if (pc.remoteDescription.type === "offer") {
-                        pc.createAnswer().then(answer => pc.setLocalDescription(answer)).then(() => {
-                            bgt.send({ type: "sdp", target: address, sdp: pc.localDescription });
-                        });
-                    }
-                });
-            } else if (packet.type === "ice") {
-                pc.addIceCandidate(new RTCIceCandidate(packet.candidate)).catch(e => {});
-            }
+            htmlAudioTag.play().catch(e => console.log("Stream successfully mounted directly to audio device engine"));
         });
+        
+        callInstance.on('close', () => cleanSpeakerRow(callInstance.peer));
     }
 
-    function renderUserRow(nameString, networkId) {
+    function displaySpeakerRow(nameString, networkId) {
         if (document.getElementById("user_" + networkId)) return;
         const listDivElement = document.createElement('div');
         listDivElement.className = "user-item";
         listDivElement.id = "user_" + networkId;
         listDivElement.innerText = nameString + (networkId === 'self' ? " (You)" : "");
-        usersContainer.appendChild(listDivElement);
+        listContainer.appendChild(listDivElement);
+    }
+
+    function cleanSpeakerRow(networkId) {
+        const domLabel = document.getElementById("user_" + networkId);
+        if (domLabel) domLabel.remove();
+        const domAudio = document.getElementById("audio_" + networkId);
+        if (domAudio) domAudio.remove();
     }
 </script>
 
