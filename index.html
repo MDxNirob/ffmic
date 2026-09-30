@@ -3,31 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Voice Chat</title>
+    <title>Voice Room - Discord Style</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- PeerJS for direct browser-to-browser voice streaming -->
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         body { background-color: #1e1f22; color: #dbdee1; font-family: sans-serif; }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col justify-between overflow-hidden">
 
-    <!-- JOIN MODAL -->
+    <!-- JOIN / LOGIN MODAL -->
     <div id="join-modal" class="fixed inset-0 z-50 bg-[#1e1f22] flex flex-col items-center justify-center p-6">
         <div class="w-full max-w-sm bg-[#2b2d31] p-6 rounded-2xl shadow-2xl flex flex-col items-center space-y-4 border border-[#3f4147]">
             <div class="w-16 h-16 bg-[#5865F2] text-white rounded-full flex items-center justify-center text-2xl shadow-md">
                 <i class="fa-solid fa-microphone-lines"></i>
             </div>
-            <h1 class="text-xl font-bold text-white">Voice Room</h1>
-            <p class="text-xs text-[#949ba4] text-center">Enter your name to join your friends in the voice channel.</p>
+            <h1 class="text-xl font-bold text-white">Voice Lobby</h1>
+            <p class="text-xs text-[#949ba4] text-center">Enter your name to join the live room.</p>
             
             <input type="text" id="username-input" placeholder="Your Name (e.g. Nirob)" maxlength="15"
                 class="w-full bg-[#1e1f22] border border-transparent focus:border-[#5865F2] text-white text-sm rounded-lg px-4 py-3 outline-none">
             
             <button id="join-btn" class="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-medium py-3 rounded-lg transition shadow">
-                Connect Voice
+                Join Voice Channel
             </button>
             <p id="error-msg" class="text-xs text-red-400 hidden"></p>
         </div>
@@ -38,9 +37,15 @@
         <div class="flex items-center justify-between pb-3 border-b border-[#3f4147]">
             <div class="flex items-center space-x-2">
                 <i class="fa-solid fa-volume-high text-[#5865F2]"></i>
-                <span class="font-bold text-white text-sm">General Voice Channel</span>
+                <div>
+                    <span class="font-bold text-white text-sm block">General Voice Channel</span>
+                    <span id="online-count-text" class="text-[11px] text-[#949ba4]">0 online</span>
+                </div>
             </div>
-            <span id="status-badge" class="text-[11px] px-2.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">Connecting...</span>
+            <div class="flex items-center space-x-2">
+                <button id="change-name-btn" class="text-[11px] bg-[#36393f] hover:bg-[#4f545c] text-white px-2.5 py-1 rounded-md transition">Change Name</button>
+                <span id="status-badge" class="text-[11px] px-2.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">Connecting...</span>
+            </div>
         </div>
 
         <!-- Participants List -->
@@ -51,10 +56,10 @@
 
     <!-- BOTTOM CONTROLS -->
     <div class="h-20 bg-[#2b2d31] border-t border-[#3f4147] flex items-center justify-around px-4">
-        <button id="mute-btn" class="w-14 h-14 rounded-full bg-[#313338] hover:bg-[#40444b] text-white flex items-center justify-center text-xl shadow transition">
+        <button id="mute-btn" class="w-14 h-14 rounded-full bg-[#313338] hover:bg-[#40444b] text-white flex items-center justify-center text-xl shadow transition" title="Mute Yourself">
             <i class="fa-solid fa-microphone" id="mute-icon"></i>
         </button>
-        <button id="leave-btn" class="w-14 h-14 rounded-full bg-[#ed4245] hover:bg-[#c9383b] text-white flex items-center justify-center text-xl shadow transition">
+        <button id="leave-btn" class="w-14 h-14 rounded-full bg-[#ed4245] hover:bg-[#c9383b] text-white flex items-center justify-center text-xl shadow transition" title="Leave Room">
             <i class="fa-solid fa-phone-slash"></i>
         </button>
     </div>
@@ -63,10 +68,21 @@
 
     <script>
         let localStream = null;
-        let peer = null;
-        let myName = '';
+        let socket = null;
+        let myName = localStorage.getItem('voice_room_username') || '';
+        let myId = null;
         let isMuted = false;
-        const roomNamespace = 'ffmic-room-alpha-v1'; // Shared room cluster key
+        let peerConnections = {}; 
+        let remoteAudioElements = {}; 
+        let activeUsersMap = {}; // socketId -> name
+
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+        };
 
         const joinModal = document.getElementById('join-modal');
         const usernameInput = document.getElementById('username-input');
@@ -77,104 +93,177 @@
         const muteBtn = document.getElementById('mute-btn');
         const muteIcon = document.getElementById('mute-icon');
         const leaveBtn = document.getElementById('leave-btn');
+        const changeNameBtn = document.getElementById('change-name-btn');
+        const onlineCountText = document.getElementById('online-count-text');
 
-        joinBtn.addEventListener('click', async () => {
-            myName = usernameInput.value.trim();
-            if (!myName) {
+        // Check if cookie/localStorage has name saved
+        window.addEventListener('DOMContentLoaded', () => {
+            if (myName) {
+                usernameInput.value = myName;
+                // Auto join if name exists
+                startVoiceSession(myName);
+            }
+        });
+
+        joinBtn.addEventListener('click', () => {
+            const enteredName = usernameInput.value.trim();
+            if (!enteredName) {
                 errorMsg.textContent = "Please enter your name.";
                 errorMsg.classList.remove('hidden');
                 return;
             }
+            startVoiceSession(enteredName);
+        });
 
+        changeNameBtn.addEventListener('click', () => {
+            if (socket) socket.disconnect();
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            joinModal.classList.remove('hidden');
+        });
+
+        async function startVoiceSession(name) {
+            errorMsg.classList.add('hidden');
             joinBtn.disabled = true;
             joinBtn.textContent = "Accessing Mic...";
 
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-                });
+                if (!localStream) {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                    });
+                }
 
+                myName = name;
+                localStorage.setItem('voice_room_username', myName);
                 joinModal.classList.add('hidden');
-                addUserCard('local', myName, true);
 
-                initMeshNetwork();
+                initSignaling();
 
             } catch (err) {
                 console.error(err);
                 errorMsg.textContent = "Microphone permission required! Check browser site settings.";
                 errorMsg.classList.remove('hidden');
                 joinBtn.disabled = false;
-                joinBtn.textContent = "Connect Voice";
+                joinBtn.textContent = "Join Voice Channel";
             }
-        });
+        }
 
-        function initMeshNetwork() {
-            // Create a deterministic Peer ID using user's name + room namespace
-            const cleanName = myName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const myPeerId = roomNamespace + '-' + cleanName + '-' + Math.floor(Math.random() * 1000);
+        function initSignaling() {
+            socket = io('https://portal.webrtc.ecl.ntt.com:443', { path: '/socket.io' });
 
-            peer = new Peer(myPeerId, {
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
-                }
-            });
-
-            peer.on('open', (id) => {
+            socket.on('connect', () => {
+                myId = socket.id;
                 statusBadge.textContent = "Connected";
                 statusBadge.className = "text-[11px] px-2.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium";
                 
-                // Scan and connect to other peers in the room every few seconds
-                startPeerDiscovery();
+                // Join room with name payload for uniqueness validation
+                socket.emit('join', { room: 'github-pages-voice-room-v12', name: myName });
             });
 
-            peer.on('call', (call) => {
-                call.answer(localStream);
-                setupCallEvents(call);
+            socket.on('name-taken', () => {
+                statusBadge.textContent = "Name Taken";
+                statusBadge.className = "text-[11px] px-2.5 py-0.5 rounded bg-red-500/10 text-red-400 font-medium";
+                errorMsg.textContent = "This name is already taken in the room. Choose another.";
+                errorMsg.classList.remove('hidden');
+                joinModal.classList.remove('hidden');
+                joinBtn.disabled = false;
+                joinBtn.textContent = "Join Voice Channel";
+                socket.disconnect();
             });
 
-            peer.on('error', (err) => {
-                console.log("Peer error:", err);
+            socket.on('room-joined', (data) => {
+                // data.users is a map or array of active peers
+                activeUsersMap[myId] = myName;
+                addUserCard(myId, myName, true);
+            });
+
+            socket.on('peers', async (usersList) => {
+                // usersList contains existing peers
+                for (let peerObj of usersList) {
+                    if (peerObj.id !== myId) {
+                        activeUsersMap[peerObj.id] = peerObj.name;
+                        addUserCard(peerObj.id, peerObj.name, false);
+                        await createPeerConnection(peerObj.id, true);
+                    }
+                }
+                updateOnlineCount();
+            });
+
+            socket.on('new-peer', async (data) => {
+                activeUsersMap[data.id] = data.name;
+                addUserCard(data.id, data.name, false);
+                updateOnlineCount();
+            });
+
+            socket.on('signal', async (data) => {
+                const { from, signal } = data;
+                let pc = peerConnections[from];
+                if (!pc) {
+                    pc = await createPeerConnection(from, false);
+                }
+
+                if (signal.sdp) {
+                    await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                    if (signal.sdp.type === 'offer') {
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        socket.emit('signal', { to: from, signal: { sdp: pc.localDescription } });
+                    }
+                } else if (signal.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                }
+            });
+
+            socket.on('peer-left', (id) => {
+                removeUserCard(id);
+                delete activeUsersMap[id];
+                if (peerConnections[id]) {
+                    peerConnections[id].close();
+                    delete peerConnections[id];
+                }
+                updateOnlineCount();
             });
         }
 
-        function startPeerDiscovery() {
-            // Since it's serverless on GitHub Pages, we check a list of common suffix numbers or connect to known name variations.
-            // Even simpler: When you want to talk, both users can tap a "Scan Room" or it auto-connects by checking active IDs.
-            // Let's poll a discovery loop:
-            setInterval(() => {
-                // Periodically check if anyone else is broadcasting in the same room namespace
-            }, 5000);
+        async function createPeerConnection(targetId, isInitiator) {
+            const pc = new RTCPeerConnection(rtcConfig);
+            peerConnections[targetId] = pc;
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { to: targetId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            pc.ontrack = (event) => {
+                const remoteStream = event.streams[0];
+                playRemoteAudio(targetId, remoteStream);
+            };
+
+            if (isInitiator) {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('signal', { to: targetId, signal: { sdp: pc.localDescription } });
+            }
+
+            return pc;
         }
 
-        function callPeer(targetId, displayName) {
-            const call = peer.call(targetId, localStream);
-            setupCallEvents(call, displayName);
-        }
-
-        function setupCallEvents(call, remoteName = "Friend") {
-            call.on('stream', (remoteStream) => {
-                playAudio(call.peer, remoteStream);
-                addUserCard(call.peer, remoteName, false);
-            });
-            call.on('close', () => {
-                removeUserCard(call.peer);
-            });
-        }
-
-        function playAudio(id, stream) {
-            let audio = document.getElementById('audio-' + id);
+        function playRemoteAudio(id, stream) {
+            let audio = remoteAudioElements[id];
             if (!audio) {
                 audio = document.createElement('audio');
-                audio.id = 'audio-' + id;
                 audio.autoplay = true;
                 audio.playsInline = true;
                 document.getElementById('audio-container').appendChild(audio);
+                remoteAudioElements[id] = audio;
             }
             audio.srcObject = stream;
-            audio.play().catch(e => console.log("Audio play error:", e));
+            audio.play().catch(e => console.log("Audio waiting gesture:", e));
         }
 
         function addUserCard(id, name, isMe) {
@@ -182,6 +271,7 @@
             const card = document.createElement('div');
             card.id = 'user-' + id;
             card.className = "flex items-center justify-between bg-[#2b2d31] px-4 py-3 rounded-xl border border-[#3f4147]";
+            
             card.innerHTML = `
                 <div class="flex items-center space-x-3">
                     <div class="w-10 h-10 rounded-full bg-[#5865F2] flex items-center justify-center font-bold text-white text-sm">
@@ -189,22 +279,50 @@
                     </div>
                     <div>
                         <div class="text-white font-medium text-sm">${name} ${isMe ? '(You)' : ''}</div>
-                        <div class="text-[11px] text-[#949ba4]" id="status-${id}">Speaking</div>
+                        <div class="text-[11px] text-[#949ba4]" id="status-${id}">Talking Online</div>
                     </div>
                 </div>
-                <div id="mic-wrap-${id}" class="text-emerald-400 text-sm">
-                    <i class="fa-solid fa-microphone"></i>
+                <div class="flex items-center space-x-2">
+                    <div id="mic-icon-wrap-${id}" class="text-emerald-400 text-sm">
+                        <i class="fa-solid fa-microphone"></i>
+                    </div>
+                    ${!isMe ? `<button onclick="toggleMuteRemote('${id}')" id="mute-remote-btn-${id}" class="px-2.5 py-1 bg-[#36393f] hover:bg-[#4f545c] text-xs text-white rounded-md transition">Mute</button>` : ''}
                 </div>
             `;
             roomUsers.appendChild(card);
+            updateOnlineCount();
         }
 
         function removeUserCard(id) {
             const card = document.getElementById('user-' + id);
             if (card) card.remove();
-            const audio = document.getElementById('audio-' + id);
-            if (audio) audio.remove();
+            if (remoteAudioElements[id]) {
+                remoteAudioElements[id].remove();
+                delete remoteAudioElements[id];
+            }
         }
+
+        function updateOnlineCount() {
+            const count = Object.keys(activeUsersMap).length;
+            onlineCountText.textContent = count + " online in voice";
+        }
+
+        window.toggleMuteRemote = function(id) {
+            const audio = remoteAudioElements[id];
+            const btn = document.getElementById('mute-remote-btn-' + id);
+            if (audio) {
+                audio.muted = !audio.muted;
+                if (audio.muted) {
+                    btn.textContent = "Unmute";
+                    btn.className = "px-2.5 py-1 bg-red-500/20 text-xs text-red-400 rounded-md transition";
+                    document.getElementById('mic-icon-wrap-' + id).innerHTML = '<i class="fa-solid fa-microphone-slash text-red-400"></i>';
+                } else {
+                    btn.textContent = "Mute";
+                    btn.className = "px-2.5 py-1 bg-[#36393f] hover:bg-[#4f545c] text-xs text-white rounded-md transition";
+                    document.getElementById('mic-icon-wrap-' + id).innerHTML = '<i class="fa-solid fa-microphone text-emerald-400"></i>';
+                }
+            }
+        };
 
         muteBtn.addEventListener('click', () => {
             if (!localStream) return;
@@ -216,17 +334,18 @@
             if (isMuted) {
                 muteBtn.classList.add('bg-[#ed4245]');
                 muteIcon.className = "fa-solid fa-microphone-slash";
-                document.getElementById('mic-wrap-local').innerHTML = '<i class="fa-solid fa-microphone-slash text-red-400"></i>';
+                document.getElementById('mic-icon-wrap-' + myId).innerHTML = '<i class="fa-solid fa-microphone-slash text-red-400"></i>';
             } else {
                 muteBtn.classList.remove('bg-[#ed4245]');
                 muteIcon.className = "fa-solid fa-microphone";
-                document.getElementById('mic-wrap-local').innerHTML = '<i class="fa-solid fa-microphone text-emerald-400"></i>';
+                document.getElementById('mic-icon-wrap-' + myId).innerHTML = '<i class="fa-solid fa-microphone text-emerald-400"></i>';
             }
         });
 
         leaveBtn.addEventListener('click', () => {
             if (localStream) localStream.getTracks().forEach(t => t.stop());
-            if (peer) peer.destroy();
+            if (socket) socket.disconnect();
+            localStorage.removeItem('voice_room_username');
             window.location.reload();
         });
     </script>
