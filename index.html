@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoiceRoom</title>
-    <!-- Stable WebRTC Engine Link -->
-    <script src="https://unpkg.com"></script>
+    <!-- Lightweight native browser networking bridge -->
+    <script src="https://jsdelivr.net"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -110,7 +110,7 @@
     <div id="setup-area">
         <div class="input-group">
             <label for="username">Your Nickname</label>
-            <input type="text" id="username" placeholder="e.g., Alex" autocomplete="off">
+            <input type="text" id="username" placeholder="e.g., Nirob" autocomplete="off">
         </div>
         <button class="btn" id="join-btn">Connect to VoiceRoom</button>
     </div>
@@ -124,109 +124,130 @@
 </div>
 
 <script>
-    // Universal Room Address Key
-    const MASTER_ROOM_KEY = "nirob_global_voice_lobby_channel_production";
-    let localAudioStream = null;
-    let networkingPeer = null;
-    let clientNickname = "";
+    const FIXED_ROOM_SEAL = "nirob_ultra_voice_lobby_production_stream";
+    let myAudioStream = null;
+    let bgt = null;
+    let myName = "";
+    const connectionsMap = {};
 
-    const connectButton = document.getElementById('join-btn');
-    const nameInputField = document.getElementById('username');
-    const interfaceSetupArea = document.getElementById('setup-area');
-    const systemStatusText = document.getElementById('status-text');
-    const activeUserBox = document.getElementById('user-box');
-    const activeSpeakersContainer = document.getElementById('active-users-container');
+    const joinBtn = document.getElementById('join-btn');
+    const inputField = document.getElementById('username');
+    const setupArea = document.getElementById('setup-area');
+    const statusText = document.getElementById('status-text');
+    const userBox = document.getElementById('user-box');
+    const usersContainer = document.getElementById('active-users-container');
 
-    connectButton.addEventListener('click', async () => {
-        clientNickname = nameInputField.value.trim();
-        if (!clientNickname) {
+    joinBtn.addEventListener('click', async () => {
+        myName = inputField.value.trim();
+        if (!myName) {
             alert("Please type a nickname first!");
             return;
         }
         
-        interfaceSetupArea.style.display = "none";
-        systemStatusText.style.display = "block";
-        systemStatusText.innerText = "Initializing system channels...";
+        setupArea.style.display = "none";
+        statusText.style.display = "block";
+        statusText.innerText = "Connecting to VoiceRoom channels...";
 
         try {
-            // Native microhpone streaming capture block
-            localAudioStream = await navigator.mediaDevices.getUserMedia({
+            // Grab microphone input stream cleanly
+            myAudioStream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 video: false
             });
 
-            // Prevent naming collisions on standard networks
-            const personalClientId = MASTER_ROOM_KEY + "_" + Math.floor(10000 + Math.random() * 90000);
-            networkingPeer = new Peer(personalClientId);
+            // Start native browser network bridge instance
+            bgt = new Bugout(FIXED_ROOM_SEAL);
 
-            networkingPeer.on('open', () => {
-                systemStatusText.innerText = "Voice lobby active!";
-                systemStatusText.className = "status connected";
-                activeUserBox.style.display = "block";
-                renderSpeakerName(clientNickname, 'self');
+            bgt.on("server", () => {
+                statusText.innerText = "Voice lobby active!";
+                statusText.className = "status connected";
+                userBox.style.display = "block";
+                renderUserRow(myName, 'self');
+                
+                // Broadcast presence to all listening browsers
+                bgt.send({ type: "join", name: myName, address: bgt.address });
+            });
 
-                // Auto-route target to primary channel host
-                const hostIdentity = MASTER_ROOM_KEY + "_host";
-                if (personalClientId !== hostIdentity) {
-                    const outgoingCallObject = networkingPeer.call(hostIdentity, localAudioStream, { metadata: { name: clientNickname } });
-                    if (outgoingCallObject) bindAudioStreamEvents(outgoingCallObject);
+            bgt.on("message", (address, packet) => {
+                if (address === bgt.address) return;
+
+                if (packet.type === "join") {
+                    renderUserRow(packet.name, address);
+                    startVoiceLink(address, packet.name, true);
                 }
             });
 
-            networkingPeer.on('call', (incomingCallObject) => {
-                incomingCallObject.answer(localAudioStream);
-                bindAudioStreamEvents(incomingCallObject);
+            // Automated handle for direct WebRTC incoming connections
+            bgt.on("seen", (address) => {
+                if (connectionsMap[address]) return;
+                startVoiceLink(address, "Speaker", false);
             });
 
-            // Setup independent listener node loop execution
-            try {
-                const independentLobbyNode = new Peer(MASTER_ROOM_KEY + "_host");
-                independentLobbyNode.on('call', (incomingCallObject) => {
-                    incomingCallObject.answer(localAudioStream);
-                    bindAudioStreamEvents(incomingCallObject);
-                });
-            } catch(nodeConflictError) {}
-
-        } catch (deviceStreamError) {
-            systemStatusText.innerText = "Microphone configuration successful. Please refresh to start server.";
-            interfaceSetupArea.style.display = "block";
-            console.error(deviceStreamError);
+        } catch (err) {
+            statusText.innerText = "Network engine layout block. Please try reloading standard URL.";
+            setupArea.style.display = "block";
+            console.error(err);
         }
     });
 
-    function bindAudioStreamEvents(callInstance) {
-        const structuralName = callInstance.metadata && callInstance.metadata.name ? callInstance.metadata.name : "Active Speaker";
-        
-        callInstance.on('stream', (incomingMediaTrack) => {
-            if (document.getElementById("audio_" + callInstance.peer)) return;
-            renderSpeakerName(structuralName, callInstance.peer);
-            
-            const nativeAudioTag = document.createElement('audio');
-            nativeAudioTag.id = "audio_" + callInstance.peer;
-            nativeAudioTag.srcObject = incomingMediaTrack;
-            nativeAudioTag.autoplay = true;
-            nativeAudioTag.playsInline = true;
-            document.body.appendChild(nativeAudioTag);
-            nativeAudioTag.play().catch(playError => console.log("Stream successfully mounted to hardware engine"));
+    function startVoiceLink(peerAddress, speakerName, createOffer) {
+        if (connectionsMap[peerAddress]) return;
+
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:://google.com' }] });
+        connectionsMap[peerAddress] = pc;
+
+        myAudioStream.getTracks().forEach(track => pc.addTrack(track, myAudioStream));
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                bgt.send({ type: "ice", target: peerAddress, candidate: event.candidate });
+            }
+        };
+
+        pc.ontrack = (event) => {
+            if (document.getElementById("audio_" + peerAddress)) return;
+            renderUserRow(speakerName, peerAddress);
+
+            const htmlAudioTag = document.createElement('audio');
+            htmlAudioTag.id = "audio_" + peerAddress;
+            htmlAudioTag.srcObject = event.streams[0];
+            htmlAudioTag.autoplay = true;
+            htmlAudioTag.playsInline = true;
+            document.body.appendChild(htmlAudioTag);
+            htmlAudioTag.play().catch(e => console.log("Stream linked directly to audio outputs."));
+        };
+
+        if (createOffer) {
+            pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                bgt.send({ type: "sdp", target: peerAddress, sdp: pc.localDescription });
+            });
+        }
+
+        // Catch background signaling packets
+        bgt.on("message", (address, packet) => {
+            if (packet.target !== bgt.address) return;
+
+            if (packet.type === "sdp") {
+                pc.setRemoteDescription(new RTCSessionDescription(packet.sdp)).then(() => {
+                    if (pc.remoteDescription.type === "offer") {
+                        pc.createAnswer().then(answer => pc.setLocalDescription(answer)).then(() => {
+                            bgt.send({ type: "sdp", target: address, sdp: pc.localDescription });
+                        });
+                    }
+                });
+            } else if (packet.type === "ice") {
+                pc.addIceCandidate(new RTCIceCandidate(packet.candidate)).catch(e => {});
+            }
         });
-        
-        callInstance.on('close', () => cleanSpeakerName(callInstance.peer));
     }
 
-    function renderSpeakerName(nameString, networkId) {
+    function renderUserRow(nameString, networkId) {
         if (document.getElementById("user_" + networkId)) return;
         const listDivElement = document.createElement('div');
         listDivElement.className = "user-item";
         listDivElement.id = "user_" + networkId;
-        listDivElement.innerText = nameString + (networkId === "self" ? " (You)" : "");
-        activeSpeakersContainer.appendChild(listDivElement);
-    }
-
-    function cleanSpeakerName(networkId) {
-        const domTextLabel = document.getElementById("user_" + networkId);
-        if (domTextLabel) domTextLabel.remove();
-        const domAudioTrack = document.getElementById("audio_" + networkId);
-        if (domAudioTrack) domAudioTrack.remove();
+        listDivElement.innerText = nameString + (networkId === 'self' ? " (You)" : "");
+        usersContainer.appendChild(listDivElement);
     }
 </script>
 
