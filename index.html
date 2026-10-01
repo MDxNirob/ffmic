@@ -34,21 +34,18 @@
     <!-- Join Screen -->
     <div class="container" id="login-ui">
         <div class="panel">
-            <h2>Join a Voice Room</h2>
+            <h2>Join Voice Room</h2>
             <label>Display Name</label>
             <input type="text" id="username" placeholder="e.g. Nirob">
             
-            <label>Room Name</label>
-            <input type="text" id="roomname" placeholder="e.g. gaming-lounge">
-            
-            <button id="join-btn" class="btn-primary">Join Room</button>
+            <button id="join-btn" class="btn-primary">Connect</button>
         </div>
     </div>
 
     <!-- Room Screen -->
     <div class="container" id="room-ui">
         <div class="panel">
-            <h2 id="current-room">Room: </h2>
+            <h2>Connected</h2>
             <div class="controls">
                 <button id="mute-self-btn" class="btn-active">Mic: ON</button>
                 <button id="deafen-btn" class="btn-active">Audio: ON</button>
@@ -71,9 +68,7 @@
         const roomUi = document.getElementById('room-ui');
         const joinBtn = document.getElementById('join-btn');
         const usernameInput = document.getElementById('username');
-        const roomnameInput = document.getElementById('roomname');
         
-        const currentRoomHeader = document.getElementById('current-room');
         const usersList = document.getElementById('users-list');
         const muteSelfBtn = document.getElementById('mute-self-btn');
         const deafenBtn = document.getElementById('deafen-btn');
@@ -104,11 +99,11 @@
             }
         };
 
+        // Hardcoded room name so everyone joins the exact same mesh
+        const GLOBAL_ROOM_NAME = 'main-global-voice-room';
+
         joinBtn.addEventListener('click', async () => {
             myName = usernameInput.value.trim() || 'Anonymous';
-            const roomName = roomnameInput.value.trim();
-
-            if (!roomName) return alert('Please enter a room name');
 
             // --- Save the name for the next time they visit ---
             localStorage.setItem('savedVoiceName', myName);
@@ -125,7 +120,7 @@
                     video: false
                 });
 
-                room = joinRoom(config, roomName);
+                room = joinRoom(config, GLOBAL_ROOM_NAME);
 
                 const [sendName, getName] = room.makeAction('name');
 
@@ -161,7 +156,6 @@
 
                 loginUi.style.display = 'none';
                 roomUi.style.display = 'block';
-                currentRoomHeader.innerText = 'Room: ' + roomName;
 
             } catch (err) {
                 alert('Microphone access denied or error occurred.');
