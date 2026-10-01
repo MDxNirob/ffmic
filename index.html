@@ -131,7 +131,6 @@
 </head>
 <body>
 
-  <!-- Name screen -->
   <div id="name-screen">
     <h1>Voice Room</h1>
     <p class="sub">Enter a name to join the room</p>
@@ -139,7 +138,6 @@
     <button id="join-btn">Join Voice</button>
   </div>
 
-  <!-- Main room -->
   <div id="room">
     <div class="header">
       <div>
@@ -160,12 +158,13 @@
 
 <script>
   // ====== CONFIG ======
-  const ROOM_ID = "express-voice-room-v2"; // Fixed hidden room ID
+  const ROOM_ID = "express-global-voice-v10"; 
   
-  // Using your ExpressTURN credentials
   const PEER_CONFIG = {
+    debug: 0,
     config: {
       iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }, 
         { urls: "stun:free.expressturn.com:3478" },
         { 
           urls: "turn:free.expressturn.com:3478",
@@ -181,14 +180,14 @@
   let peer = null;
   let localStream = null;
   let isSelfMuted = false;
-  let isHost = false;
-  let hostConn = null;                 
   let connections = {};                
   let myPeerId = null;
 
-  // Background Networking State Variables
+  // Background Networking State
+  let isHost = false;
+  let hostConn = null;                 
   let hostClients = []; 
-  let hostPeerList = {}; 
+  let hostRoster = {}; 
 
   // ====== DOM ======
   const nameScreen = document.getElementById("name-screen");
@@ -234,138 +233,147 @@
   // ====== START ======
   async function start() {
     if (window.location.protocol === 'file:') {
-      alert("WARNING: Microphones do not work on local files. You must upload this to GitHub Pages!");
+      alert("WARNING: Microphones do not work on local files. Upload to GitHub Pages!");
       return;
     }
 
     nameScreen.style.display = "none";
     roomEl.style.display = "flex";
     myNameDisplay.textContent = myName;
-    statusEl.textContent = "Getting microphone…";
-
+    
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ 
           audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }, 
           video: false 
       });
     } catch (err) {
-      statusEl.textContent = "Microphone permission denied";
-      alert("Please allow microphone access in your browser settings.");
+      statusEl.textContent = "Mic permission denied";
+      alert("Please allow microphone access in your browser.");
       return;
     }
 
-    statusEl.textContent = "Connecting to room…";
-
-    // Create our peer for making media calls
-    peer = new Peer(PEER_CONFIG);
-
-    peer.on("open", id => {
-      myPeerId = id;
-      tryJoinOrBecomeHost();
-    });
-
-    peer.on("error", err => {
-      console.error(err);
-      statusEl.textContent = "Connection error – try refreshing";
-    });
-
-    peer.on("call", handleIncomingCall);
+    connectAsClient(); // Everyone tries to join as a client first
   }
 
-  // ====== BACKGROUND MESH LOGIC ======
-  function tryJoinOrBecomeHost() {
-    // Attempt to connect to the hidden room manager
-    const conn = peer.connect(ROOM_ID, { reliable: true });
-    let joined = false;
+  // ====== MESH NETWORKING ======
 
-    conn.on("open", () => {
-      joined = true;
-      isHost = false;
-      hostConn = conn;
-      statusEl.textContent = "Connected";
-      statusEl.classList.add("connected");
+  function connectAsClient() {
+    if (peer) peer.destroy();
+    statusEl.textContent = "Connecting to room...";
+    statusEl.classList.remove("connected");
 
-      // Send our profile to the network
-      conn.send({ type: "join", id: myPeerId, name: myName });
-    });
-
-    conn.on("data", data => handleHostMessage(data));
-
-    conn.on("close", () => {
-      statusEl.textContent = "Reconnecting...";
-      statusEl.classList.remove("connected");
-      
-      // Clear everyone and silently renegotiate network
-      Object.keys(connections).forEach(removeRemote);
-      setTimeout(tryJoinOrBecomeHost, Math.random() * 2000 + 500);
-    });
-
-    // If connection fails, silently take over network routing
     setTimeout(() => {
-      if (!joined) becomeHost();
-    }, 2500);
+      peer = new Peer(PEER_CONFIG);
+
+      peer.on("open", id => {
+        myPeerId = id;
+        hostConn = peer.connect(ROOM_ID, { reliable: true });
+
+        hostConn.on("open", () => {
+          isHost = false;
+          statusEl.textContent = "Connected";
+          statusEl.classList.add("connected");
+          hostConn.send({ type: "join", id: myPeerId, name: myName });
+        });
+
+        hostConn.on("data", handleClientData);
+
+        hostConn.on("close", () => {
+          statusEl.textContent = "Reconnecting...";
+          statusEl.classList.remove("connected");
+          resetRoom();
+          // If host leaves, wait a random time to prevent everyone from fighting to be the new host
+          setTimeout(connectAsHost, Math.random() * 2000 + 500);
+        });
+      });
+
+      peer.on("error", err => {
+        if (err.type === "peer-unavailable") {
+          // Room does not exist yet. Become the room.
+          connectAsHost();
+        }
+      });
+
+      peer.on("call", handleIncomingCall);
+    }, 500);
   }
 
-  // ---- SEAMLESS BACKGROUND ROUTING ----
-  function becomeHost() {
-    isHost = true;
-    statusEl.textContent = "Connected";
-    statusEl.classList.add("connected");
+  function connectAsHost() {
+    if (peer) peer.destroy();
+    statusEl.textContent = "Establishing room...";
+    statusEl.classList.remove("connected");
 
-    const hostPeer = new Peer(ROOM_ID, PEER_CONFIG);
-    hostPeerList[myPeerId] = myName; 
+    setTimeout(() => {
+      // The host claims the global ROOM_ID
+      peer = new Peer(ROOM_ID, PEER_CONFIG);
 
-    hostPeer.on("connection", conn => {
-      conn.on("open", () => {
-        conn.on("data", data => {
-          if (data.type === "join") {
-            hostClients.push(conn);
-            hostPeerList[data.id] = data.name;
+      peer.on("open", id => {
+        myPeerId = id; // id will equal ROOM_ID
+        isHost = true;
+        statusEl.textContent = "Connected";
+        statusEl.classList.add("connected");
 
-            // Send full list to the new user
-            conn.send({ type: "list", list: hostPeerList });
+        hostClients = [];
+        hostRoster = {};
+        hostRoster[myPeerId] = myName; // Add self
+        renderParticipants();
+      });
 
-            // Tell all other existing users
-            hostClients.forEach(c => {
-              if (c.peer !== conn.peer) {
-                c.send({ type: "new", id: data.id, name: data.name });
-              }
-            });
-          } 
-          else if (data.type === "name") {
-            hostPeerList[data.id] = data.name;
-            hostClients.forEach(c => {
-              if (c.peer !== conn.peer) c.send(data);
-            });
+      peer.on("connection", conn => {
+        conn.on("open", () => {
+          conn.on("data", data => {
+            if (data.type === "join") {
+              hostClients.push(conn);
+              hostRoster[data.id] = data.name;
+
+              // Give the new person the full roster so they can make calls
+              conn.send({ type: "list", roster: hostRoster });
+
+              // Tell existing people to expect a call
+              hostClients.forEach(c => {
+                if (c.peer !== conn.peer) c.send({ type: "new", id: data.id, name: data.name });
+              });
+              renderParticipants();
+            } 
+            else if (data.type === "name") {
+              hostRoster[data.id] = data.name;
+              hostClients.forEach(c => {
+                if (c.peer !== conn.peer) c.send(data);
+              });
+              renderParticipants();
+            }
+          });
+        });
+
+        conn.on("close", () => {
+          const leftId = conn.peer;
+          hostClients = hostClients.filter(c => c.peer !== leftId);
+          if (hostRoster[leftId]) {
+            delete hostRoster[leftId];
+            hostClients.forEach(c => c.send({ type: "left", id: leftId }));
+            removeRemote(leftId);
           }
         });
       });
 
-      conn.on("close", () => {
-        const disconnectedId = Object.keys(hostPeerList).find(id => id !== myPeerId && !hostClients.some(c => c.peer === conn.peer));
-        hostClients = hostClients.filter(c => c.peer !== conn.peer);
-        
-        if (disconnectedId) {
-            delete hostPeerList[disconnectedId];
-            hostClients.forEach(c => c.send({ type: "left", id: disconnectedId }));
+      peer.on("error", err => {
+        if (err.type === "unavailable-id") {
+          // Someone else beat us to becoming the host. Go back to being a client.
+          connectAsClient();
         }
       });
-    });
 
-    hostPeer.on("error", err => {
-      if (err.type === "unavailable-id") {
-        setTimeout(tryJoinOrBecomeHost, 2000); 
-      }
-    });
+      peer.on("call", handleIncomingCall);
+    }, 500);
   }
 
-  // ---- MESSAGE HANDLER ----
-  function handleHostMessage(data) {
+  // ---- CLIENT DATA ROUTER ----
+  function handleClientData(data) {
     if (data.type === "list") {
-      Object.keys(data.list).forEach(id => {
+      Object.keys(data.roster).forEach(id => {
         if (id !== myPeerId) {
-          addRemote(id, data.list[id], null);
-          callPeer(id); 
+          addRemote(id, data.roster[id], null);
+          callPeer(id); // The new guy makes the outgoing calls
         }
       });
       renderParticipants();
@@ -373,7 +381,7 @@
     else if (data.type === "new") {
       if (data.id !== myPeerId) {
         addRemote(data.id, data.name, null);
-        renderParticipants();
+        renderParticipants(); // Just wait for the new guy to call us
       }
     } 
     else if (data.type === "name") {
@@ -449,10 +457,15 @@
     renderParticipants();
   }
 
+  function resetRoom() {
+    Object.keys(connections).forEach(removeRemote);
+    connections = {};
+    renderParticipants();
+  }
+
   function renderParticipants() {
     participantsEl.innerHTML = "";
 
-    // Render Myself
     const meDiv = document.createElement("div");
     meDiv.className = "person me";
     meDiv.innerHTML = `
@@ -469,7 +482,15 @@
     `;
     participantsEl.appendChild(meDiv);
 
-    // Render Others
+    // Host manually adds themselves to UI because they aren't in the connections array
+    if (isHost) {
+      Object.keys(hostRoster).forEach(id => {
+        if (id !== myPeerId && !connections[id]) {
+          addRemote(id, hostRoster[id], null);
+        }
+      });
+    }
+
     Object.keys(connections).forEach(id => {
       const p = connections[id];
       const div = document.createElement("div");
@@ -510,7 +531,7 @@
 
   function broadcastName() {
     if (isHost) {
-      hostPeerList[myPeerId] = myName;
+      hostRoster[myPeerId] = myName;
       hostClients.forEach(c => c.send({ type: "name", id: myPeerId, name: myName }));
     } else if (hostConn && hostConn.open) {
       hostConn.send({ type: "name", id: myPeerId, name: myName });
@@ -526,7 +547,7 @@
   function leaveRoom() {
     if (localStream) localStream.getTracks().forEach(t => t.stop());
     if (peer) peer.destroy();
-    Object.keys(connections).forEach(removeRemote);
+    resetRoom();
     location.reload();
   }
 </script>
