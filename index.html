@@ -3,30 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Room</title>
+    <title>Pro Voice Room</title>
     <style>
         /* Discord-inspired Dark Theme */
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #36393f; color: #dcddde; margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; height: 100vh; }
-        .container { padding: 20px; max-width: 500px; width: 100%; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #36393f; color: #dcddde; margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .container { padding: 20px; max-width: 550px; width: 100%; box-sizing: border-box; }
         .panel { background-color: #2f3136; padding: 25px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin-bottom: 20px; }
-        h2, h3 { margin-top: 0; color: #ffffff; }
-        input { padding: 12px; margin: 8px 0 16px 0; width: 100%; box-sizing: border-box; border-radius: 4px; border: none; font-size: 16px; background-color: #202225; color: #dcddde; outline: none; }
-        input:focus { box-shadow: 0 0 0 2px #5865F2; }
+        h2, h3 { margin-top: 0; color: #ffffff; margin-bottom: 15px; }
+        label { font-size: 12px; font-weight: bold; text-transform: uppercase; color: #8e9297; display: block; margin-bottom: 5px; }
+        input[type="text"], select, input[type="file"] { padding: 10px; margin-bottom: 15px; width: 100%; box-sizing: border-box; border-radius: 4px; border: none; font-size: 15px; background-color: #202225; color: #dcddde; outline: none; }
+        input[type="text"]:focus, select:focus { box-shadow: 0 0 0 2px #5865F2; }
         button { padding: 12px; margin: 5px 0; width: 100%; border-radius: 4px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.2s; color: white; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
         
-        /* Button States */
+        .flex-row { display: flex; gap: 10px; }
+        .flex-row > div { flex: 1; }
+
         .btn-primary { background-color: #5865F2; }
-        .btn-primary:hover { background-color: #4752C4; }
-        .btn-active { background-color: #3ba55d; } /* Green for ON */
+        .btn-primary:hover:not(:disabled) { background-color: #4752C4; }
+        .btn-active { background-color: #3ba55d; } 
         .btn-active:hover { background-color: #2d7d46; }
-        .btn-danger { background-color: #ed4245; } /* Red for Muted/Deafened */
+        .btn-danger { background-color: #ed4245; } 
         .btn-danger:hover { background-color: #c83336; }
         
-        .controls { display: flex; gap: 10px; margin-top: 15px; }
+        .controls { display: flex; gap: 10px; margin-top: 10px; margin-bottom: 10px; }
         #room-ui { display: none; }
-        .users-list { margin-top: 15px; max-height: 300px; overflow-y: auto; }
-        .user { display: flex; align-items: center; padding: 10px; background: #202225; margin-bottom: 8px; border-radius: 4px; }
-        .user-avatar { width: 32px; height: 32px; background: #5865F2; border-radius: 50%; margin-right: 12px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; }
+        .users-list { max-height: 350px; overflow-y: auto; padding-right: 5px; }
+        
+        /* User Profile UI */
+        .user { display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #202225; margin-bottom: 8px; border-radius: 6px; }
+        .user-info { display: flex; align-items: center; }
+        .user-avatar { width: 40px; height: 40px; background: #5865F2; border-radius: 50%; margin-right: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; transition: box-shadow 0.1s; border: 2px solid transparent; }
+        .user-name { font-weight: bold; font-size: 15px; color: #fff; }
+        
+        /* Speaking Highlight */
+        .speaking .user-avatar { border-color: #3ba55d; box-shadow: 0 0 8px rgba(59, 165, 93, 0.5); }
+        
+        /* Volume Slider */
+        .vol-control { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #b9bbbe; }
+        input[type="range"] { width: 80px; cursor: pointer; }
+
+        /* Soundboard */
+        .tool-section { background: #292b2f; padding: 15px; border-radius: 6px; margin-top: 15px; border: 1px solid #202225; }
     </style>
 </head>
 <body>
@@ -35,105 +53,153 @@
     <div class="container" id="login-ui">
         <div class="panel">
             <h2>Join Voice Room</h2>
-            <label>Display Name</label>
-            <input type="text" id="username" placeholder="e.g. Nirob">
-            
+            <div class="flex-row">
+                <div style="flex: 2;">
+                    <label>Display Name</label>
+                    <input type="text" id="username" placeholder="e.g. Nirob">
+                </div>
+                <div style="flex: 1;">
+                    <label>Emoji</label>
+                    <input type="text" id="emoji" placeholder="🎮" maxlength="2">
+                </div>
+            </div>
             <button id="join-btn" class="btn-primary">Connect</button>
         </div>
     </div>
 
     <!-- Room Screen -->
     <div class="container" id="room-ui">
-        <div class="panel">
-            <h2>Connected</h2>
+        <div class="panel" style="padding-bottom: 10px;">
+            <h2>Voice Connected</h2>
+            
             <div class="controls">
                 <button id="mute-self-btn" class="btn-active">Mic: ON</button>
                 <button id="deafen-btn" class="btn-active">Audio: ON</button>
             </div>
+
+            <!-- Voice Changer & Soundboard -->
+            <div class="tool-section">
+                <label>Voice Changer</label>
+                <select id="voice-changer">
+                    <option value="none">Normal Voice</option>
+                    <option value="radio">Radio / Walkie-Talkie</option>
+                    <option value="bass">Bass Boost</option>
+                    <option value="cave">Cave Echo</option>
+                </select>
+
+                <label>Soundboard (Play Meme Sound)</label>
+                <input type="file" id="soundboard-file" accept="audio/mp3, audio/wav, audio/ogg">
+                <button id="play-sound-btn" class="btn-primary" style="display:none; margin-top:0;">Play to Room</button>
+            </div>
+
             <button id="leave-btn" class="btn-danger" style="margin-top: 15px;">Disconnect</button>
         </div>
+
         <div class="panel">
             <h3>Participants</h3>
             <div class="users-list" id="users-list">
-                <!-- Users will be injected here -->
+                <!-- Users injected here -->
             </div>
         </div>
     </div>
 
-    <!-- Trystero handles Serverless WebRTC Mesh Networking -->
     <script type="module">
         import { joinRoom } from 'https://unpkg.com/trystero/torrent';
 
+        // --- DOM Elements ---
         const loginUi = document.getElementById('login-ui');
         const roomUi = document.getElementById('room-ui');
         const joinBtn = document.getElementById('join-btn');
         const usernameInput = document.getElementById('username');
-        
+        const emojiInput = document.getElementById('emoji');
         const usersList = document.getElementById('users-list');
         const muteSelfBtn = document.getElementById('mute-self-btn');
         const deafenBtn = document.getElementById('deafen-btn');
         const leaveBtn = document.getElementById('leave-btn');
+        const voiceChanger = document.getElementById('voice-changer');
+        const soundboardFile = document.getElementById('soundboard-file');
+        const playSoundBtn = document.getElementById('play-sound-btn');
 
-        // --- Load saved name from previous visits ---
-        const savedName = localStorage.getItem('savedVoiceName');
-        if (savedName) {
-            usernameInput.value = savedName;
-        }
-
+        // --- State ---
         let room;
-        let localStream;
-        let myName = '';
+        let rawMicStream;
+        let processedStream;
+        let myProfile = { name: '', emoji: '👤' };
         let peers = {}; 
+        const GLOBAL_ROOM_NAME = 'main-global-voice-room-v2';
 
+        // --- Web Audio API Variables ---
+        let audioCtx;
+        let micSourceNode;
+        let currentEffectNode;
+        let audioDestination;
+        let soundboardSource;
+        const soundboardAudioEl = new Audio();
+
+        // --- Load saved preferences ---
+        if (localStorage.getItem('savedVoiceName')) usernameInput.value = localStorage.getItem('savedVoiceName');
+        if (localStorage.getItem('savedVoiceEmoji')) emojiInput.value = localStorage.getItem('savedVoiceEmoji');
+
+        // --- Network Config using your ExpressTURN ---
         const config = {
-            appId: 'github-pages-voice-chat-v1', 
+            appId: 'github-pages-voice-chat-v2', 
             rtcConfig: {
                 iceServers: [
                     { urls: 'stun:free.expressturn.com:3478' },
-                    {
-                        urls: 'turn:free.expressturn.com:3478',
-                        username: '000000002106201354',
-                        credential: 'UXvxNY1DQ3mNNPzliqVLL8rHUcY='
+                    { 
+                        urls: 'turn:free.expressturn.com:3478', 
+                        username: '000000002106201354', 
+                        credential: 'UXvxNY1DQ3mNNPzliqVLL8rHUcY=' 
                     }
                 ]
             }
         };
 
-        // Hardcoded room name so everyone joins the exact same mesh
-        const GLOBAL_ROOM_NAME = 'main-global-voice-room';
-
         joinBtn.addEventListener('click', async () => {
-            myName = usernameInput.value.trim() || 'Anonymous';
+            // Check if running locally instead of on a server
+            if (window.location.protocol === 'file:') {
+                alert("ERROR: You cannot run this by double-clicking the HTML file. It must be uploaded to GitHub Pages (https://) to work!");
+                return;
+            }
 
-            // --- Save the name for the next time they visit ---
-            localStorage.setItem('savedVoiceName', myName);
+            myProfile.name = usernameInput.value.trim() || 'Anonymous';
+            myProfile.emoji = emojiInput.value.trim() || '👤';
+
+            localStorage.setItem('savedVoiceName', myProfile.name);
+            localStorage.setItem('savedVoiceEmoji', myProfile.emoji);
+
+            joinBtn.innerText = 'Requesting Mic...';
+            joinBtn.disabled = true;
 
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        sampleRate: 48000,
-                        channelCount: 2
-                    },
-                    video: false
+                // Request mic access
+                rawMicStream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 48000 }
                 });
 
+                joinBtn.innerText = 'Setting up Audio...';
+
+                // Setup Web Audio API routing
+                setupWebAudio(rawMicStream);
+
+                joinBtn.innerText = 'Connecting to Room...';
+
+                // Join the mesh network room
                 room = joinRoom(config, GLOBAL_ROOM_NAME);
+                const [sendProfile, getProfile] = room.makeAction('profile');
 
-                const [sendName, getName] = room.makeAction('name');
+                addUserToUI('local', myProfile);
+                monitorAudioActivity(processedStream, 'user-local');
 
-                addUserToUI('local', myName + ' (You)');
-
+                // Peer events
                 room.onPeerJoin(peerId => {
-                    sendName(myName, peerId); 
-                    addUserToUI(peerId, 'Connecting...');
+                    sendProfile(myProfile, peerId); 
+                    addUserToUI(peerId, { name: 'Connecting...', emoji: '⏳' });
                 });
 
-                getName((name, peerId) => {
-                    peers[peerId] = { ...peers[peerId], name };
-                    updateUserNameUI(peerId, name);
+                getProfile((profileData, peerId) => {
+                    peers[peerId] = { ...peers[peerId], profile: profileData };
+                    updateUserUI(peerId, profileData);
                 });
 
                 room.onPeerLeave(peerId => {
@@ -142,94 +208,190 @@
                 });
 
                 room.onPeerStream((stream, peerId) => {
-                    const audio = new Audio();
-                    audio.srcObject = stream;
-                    audio.autoplay = true;
-                    peers[peerId] = { ...peers[peerId], audio };
+                    const audioEl = new Audio();
+                    audioEl.srcObject = stream;
+                    audioEl.autoplay = true;
+                    if (isDeafened) audioEl.muted = true;
                     
-                    if (isDeafened) audio.muted = true;
-                    
-                    audio.play().catch(e => console.error("Audio playback error:", e));
+                    peers[peerId] = { ...peers[peerId], audio: audioEl };
+                    audioEl.play().catch(e => console.log("Autoplay prevented:", e));
+                    monitorAudioActivity(stream, `user-${peerId}`);
                 });
 
-                room.addStream(localStream);
+                room.addStream(processedStream);
 
+                // Switch UI
                 loginUi.style.display = 'none';
                 roomUi.style.display = 'block';
 
             } catch (err) {
-                alert('Microphone access denied or error occurred.');
+                joinBtn.innerText = 'Connect';
+                joinBtn.disabled = false;
+                alert('CONNECTION FAILED: ' + err.message + '\n\nPlease ensure your microphone is plugged in and permissions are allowed in your browser settings.');
                 console.error(err);
             }
         });
-        
+
+        // ==========================================
+        // WEB AUDIO API: Mixing & Effects
+        // ==========================================
+        function setupWebAudio(stream) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            micSourceNode = audioCtx.createMediaStreamSource(stream);
+            audioDestination = audioCtx.createMediaStreamDestination();
+            
+            soundboardSource = audioCtx.createMediaElementSource(soundboardAudioEl);
+            soundboardSource.connect(audioDestination); 
+            soundboardSource.connect(audioCtx.destination); 
+
+            applyVoiceEffect('none');
+            processedStream = audioDestination.stream;
+        }
+
+        function applyVoiceEffect(type) {
+            if (currentEffectNode) currentEffectNode.disconnect();
+            micSourceNode.disconnect();
+
+            if (type === 'none') {
+                micSourceNode.connect(audioDestination);
+            } 
+            else if (type === 'radio') {
+                const hp = audioCtx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 800;
+                const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
+                micSourceNode.connect(hp); hp.connect(lp); lp.connect(audioDestination);
+                currentEffectNode = hp; 
+            } 
+            else if (type === 'bass') {
+                const bass = audioCtx.createBiquadFilter(); bass.type = 'lowshelf'; bass.frequency.value = 200; bass.gain.value = 25;
+                micSourceNode.connect(bass); bass.connect(audioDestination);
+                currentEffectNode = bass;
+            }
+            else if (type === 'cave') {
+                const delay = audioCtx.createDelay(); delay.delayTime.value = 0.25;
+                const feedback = audioCtx.createGain(); feedback.gain.value = 0.4;
+                micSourceNode.connect(delay);
+                delay.connect(feedback); feedback.connect(delay); 
+                micSourceNode.connect(audioDestination); 
+                delay.connect(audioDestination); 
+                currentEffectNode = delay;
+            }
+        }
+
+        voiceChanger.addEventListener('change', (e) => applyVoiceEffect(e.target.value));
+
+        // ==========================================
+        // SOUNDBOARD
+        // ==========================================
+        soundboardFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                soundboardAudioEl.src = url;
+                playSoundBtn.style.display = 'block';
+            }
+        });
+
+        playSoundBtn.addEventListener('click', () => {
+            // Resume AudioContext if suspended (browser policy)
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            soundboardAudioEl.currentTime = 0;
+            soundboardAudioEl.play();
+        });
+
+        // ==========================================
+        // AUDIO ACTIVITY DETECTION
+        // ==========================================
+        function monitorAudioActivity(stream, elementId) {
+            if (!audioCtx) return;
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            const source = audioCtx.createMediaStreamSource(stream);
+            source.connect(analyser);
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            function checkLevel() {
+                const el = document.getElementById(elementId);
+                if (!el) return; 
+
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                let average = sum / dataArray.length;
+
+                // Toggle border highlight based on volume
+                if (average > 15) el.classList.add('speaking');
+                else el.classList.remove('speaking');
+
+                requestAnimationFrame(checkLevel);
+            }
+            checkLevel();
+        }
+
+        // ==========================================
+        // UI CONTROLS
+        // ==========================================
         let isMuted = false;
         muteSelfBtn.addEventListener('click', () => {
-            if (!localStream) return;
+            if (!rawMicStream) return;
             isMuted = !isMuted;
-            
-            localStream.getAudioTracks()[0].enabled = !isMuted;
-            
-            if (isMuted) {
-                muteSelfBtn.innerText = 'Mic: MUTED';
-                muteSelfBtn.className = 'btn-danger';
-            } else {
-                muteSelfBtn.innerText = 'Mic: ON';
-                muteSelfBtn.className = 'btn-active';
-            }
+            rawMicStream.getAudioTracks()[0].enabled = !isMuted;
+            muteSelfBtn.innerText = isMuted ? 'Mic: MUTED' : 'Mic: ON';
+            muteSelfBtn.className = isMuted ? 'btn-danger' : 'btn-active';
         });
 
         let isDeafened = false;
         deafenBtn.addEventListener('click', () => {
             isDeafened = !isDeafened;
-            
             Object.values(peers).forEach(peer => {
                 if (peer.audio) peer.audio.muted = isDeafened;
             });
-
-            if (isDeafened) {
-                deafenBtn.innerText = 'Audio: DEAFENED';
-                deafenBtn.className = 'btn-danger';
-            } else {
-                deafenBtn.innerText = 'Audio: ON';
-                deafenBtn.className = 'btn-active';
-            }
+            deafenBtn.innerText = isDeafened ? 'Audio: DEAFENED' : 'Audio: ON';
+            deafenBtn.className = isDeafened ? 'btn-danger' : 'btn-active';
         });
 
-        leaveBtn.addEventListener('click', () => {
-            if (room) room.leave(); 
-            if (localStream) localStream.getTracks().forEach(track => track.stop()); 
-            
-            usersList.innerHTML = '';
-            peers = {};
-            roomUi.style.display = 'none';
-            loginUi.style.display = 'flex';
-            
-            isMuted = false;
-            isDeafened = false;
-            muteSelfBtn.innerText = 'Mic: ON';
-            muteSelfBtn.className = 'btn-active';
-            deafenBtn.innerText = 'Audio: ON';
-            deafenBtn.className = 'btn-active';
-        });
-
-        function addUserToUI(id, displayName) {
+        function addUserToUI(id, profile) {
             if (document.getElementById(`user-${id}`)) return;
+            
             const userDiv = document.createElement('div');
             userDiv.className = 'user';
             userDiv.id = `user-${id}`;
-            userDiv.innerHTML = `
-                <div class="user-avatar">${displayName.charAt(0).toUpperCase()}</div>
-                <div class="user-name">${displayName}</div>
+            
+            let html = `
+                <div class="user-info">
+                    <div class="user-avatar">${profile.emoji}</div>
+                    <div class="user-name">${profile.name}</div>
+                </div>
             `;
+
+            if (id !== 'local') {
+                html += `
+                    <div class="vol-control">
+                        <label style="margin:0; font-size:10px;">Vol</label>
+                        <input type="range" min="0" max="1" step="0.05" value="1" id="vol-${id}">
+                    </div>
+                `;
+            } else {
+                html += `<div style="font-size:12px; color:#8e9297;">(You)</div>`;
+            }
+
+            userDiv.innerHTML = html;
             usersList.appendChild(userDiv);
+
+            if (id !== 'local') {
+                document.getElementById(`vol-${id}`).addEventListener('input', (e) => {
+                    if (peers[id] && peers[id].audio) {
+                        peers[id].audio.volume = e.target.value;
+                    }
+                });
+            }
         }
 
-        function updateUserNameUI(id, newName) {
+        function updateUserUI(id, profile) {
             const userDiv = document.getElementById(`user-${id}`);
             if (userDiv) {
-                userDiv.querySelector('.user-name').innerText = newName;
-                userDiv.querySelector('.user-avatar').innerText = newName.charAt(0).toUpperCase();
+                userDiv.querySelector('.user-name').innerText = profile.name;
+                userDiv.querySelector('.user-avatar').innerText = profile.emoji;
             }
         }
 
@@ -237,6 +399,10 @@
             const userDiv = document.getElementById(`user-${id}`);
             if (userDiv) userDiv.remove();
         }
+
+        leaveBtn.addEventListener('click', () => {
+            window.location.reload(); 
+        });
     </script>
 </body>
 </html>
