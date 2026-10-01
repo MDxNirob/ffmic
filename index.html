@@ -79,14 +79,19 @@
         const deafenBtn = document.getElementById('deafen-btn');
         const leaveBtn = document.getElementById('leave-btn');
 
+        // --- Load saved name from previous visits ---
+        const savedName = localStorage.getItem('savedVoiceName');
+        if (savedName) {
+            usernameInput.value = savedName;
+        }
+
         let room;
         let localStream;
         let myName = '';
-        let peers = {}; // Tracks remote names and audio elements
+        let peers = {}; 
 
-        // WebRTC Config: Forcing traffic through your ExpressTURN
         const config = {
-            appId: 'github-pages-voice-chat-v1', // Unique ID for your app's network
+            appId: 'github-pages-voice-chat-v1', 
             rtcConfig: {
                 iceServers: [
                     { urls: 'stun:free.expressturn.com:3478' },
@@ -105,63 +110,55 @@
 
             if (!roomName) return alert('Please enter a room name');
 
+            // --- Save the name for the next time they visit ---
+            localStorage.setItem('savedVoiceName', myName);
+
             try {
-                // Request best quality audio parameters
                 localStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
-                        echoCancellation: true,    // Prevents feedback loops
-                        noiseSuppression: true,    // Filters background noise
-                        autoGainControl: true,     // Balances volume automatically
-                        sampleRate: 48000,         // High fidelity (Discord standard)
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
                         channelCount: 2
                     },
                     video: false
                 });
 
-                // Join the Trystero Mesh Room
                 room = joinRoom(config, roomName);
 
-                // Setup a channel to exchange display names
                 const [sendName, getName] = room.makeAction('name');
 
-                // Add myself to the UI
                 addUserToUI('local', myName + ' (You)');
 
-                // When someone joins the room
                 room.onPeerJoin(peerId => {
-                    sendName(myName, peerId); // Send them my name immediately
+                    sendName(myName, peerId); 
                     addUserToUI(peerId, 'Connecting...');
                 });
 
-                // When someone tells us their name
                 getName((name, peerId) => {
                     peers[peerId] = { ...peers[peerId], name };
                     updateUserNameUI(peerId, name);
                 });
 
-                // When someone leaves
                 room.onPeerLeave(peerId => {
                     removeUserFromUI(peerId);
                     delete peers[peerId];
                 });
 
-                // When someone sends their voice audio
                 room.onPeerStream((stream, peerId) => {
                     const audio = new Audio();
                     audio.srcObject = stream;
                     audio.autoplay = true;
                     peers[peerId] = { ...peers[peerId], audio };
                     
-                    // If we are currently deafened, ensure new joiners are muted
                     if (isDeafened) audio.muted = true;
                     
                     audio.play().catch(e => console.error("Audio playback error:", e));
                 });
 
-                // Broadcast our local mic stream to the room
                 room.addStream(localStream);
 
-                // Switch UI screens
                 loginUi.style.display = 'none';
                 roomUi.style.display = 'block';
                 currentRoomHeader.innerText = 'Room: ' + roomName;
@@ -171,15 +168,12 @@
                 console.error(err);
             }
         });
-
-        // --- Controls: Mute & Deafen ---
         
         let isMuted = false;
         muteSelfBtn.addEventListener('click', () => {
             if (!localStream) return;
             isMuted = !isMuted;
             
-            // Disable/Enable the local audio track from being sent
             localStream.getAudioTracks()[0].enabled = !isMuted;
             
             if (isMuted) {
@@ -195,7 +189,6 @@
         deafenBtn.addEventListener('click', () => {
             isDeafened = !isDeafened;
             
-            // Loop through all connected remote audio tags and mute/unmute them locally
             Object.values(peers).forEach(peer => {
                 if (peer.audio) peer.audio.muted = isDeafened;
             });
@@ -209,18 +202,15 @@
             }
         });
 
-        // Disconnect
         leaveBtn.addEventListener('click', () => {
-            if (room) room.leave(); // Disconnect mesh
-            if (localStream) localStream.getTracks().forEach(track => track.stop()); // Stop Mic
+            if (room) room.leave(); 
+            if (localStream) localStream.getTracks().forEach(track => track.stop()); 
             
-            // Reset UI
             usersList.innerHTML = '';
             peers = {};
             roomUi.style.display = 'none';
             loginUi.style.display = 'flex';
             
-            // Reset button states
             isMuted = false;
             isDeafened = false;
             muteSelfBtn.innerText = 'Mic: ON';
@@ -228,8 +218,6 @@
             deafenBtn.innerText = 'Audio: ON';
             deafenBtn.className = 'btn-active';
         });
-
-        // --- UI Rendering Helpers ---
 
         function addUserToUI(id, displayName) {
             if (document.getElementById(`user-${id}`)) return;
