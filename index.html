@@ -158,7 +158,7 @@
 
 <script>
   // ====== CONFIG ======
-  const ROOM_ID = "express-global-voice-v10"; 
+  const ROOM_ID = "express-global-voice-v11"; 
   
   const PEER_CONFIG = {
     debug: 0,
@@ -188,6 +188,7 @@
   let hostConn = null;                 
   let hostClients = []; 
   let hostRoster = {}; 
+  let connectionTimeout = null;
 
   // ====== DOM ======
   const nameScreen = document.getElementById("name-screen");
@@ -200,6 +201,15 @@
   const muteSelfBtn = document.getElementById("mute-self-btn");
   const leaveBtn = document.getElementById("leave-btn");
   const statusEl = document.getElementById("status");
+
+  function setStatus(text, isConnected = false) {
+    statusEl.textContent = text;
+    if (isConnected) {
+      statusEl.classList.add("connected");
+    } else {
+      statusEl.classList.remove("connected");
+    }
+  }
 
   // ====== INIT ======
   if (myName) nameInput.value = myName;
@@ -247,50 +257,61 @@
           video: false 
       });
     } catch (err) {
-      statusEl.textContent = "Mic permission denied";
+      setStatus("Mic permission denied");
       alert("Please allow microphone access in your browser.");
       return;
     }
 
-    connectAsClient(); // Everyone tries to join as a client first
+    connectAsClient();
   }
 
   // ====== MESH NETWORKING ======
 
   function connectAsClient() {
     if (peer) peer.destroy();
-    statusEl.textContent = "Connecting to room...";
-    statusEl.classList.remove("connected");
+    setStatus("Searching for room...");
 
     setTimeout(() => {
       peer = new Peer(PEER_CONFIG);
 
       peer.on("open", id => {
         myPeerId = id;
-        hostConn = peer.connect(ROOM_ID, { reliable: true });
+        setStatus("Joining room...");
+        
+        // Removed reliable: true to prevent mobile browser freezing
+        hostConn = peer.connect(ROOM_ID); 
+
+        // If host doesn't respond in 6 seconds, assume host is dead and take over
+        connectionTimeout = setTimeout(() => {
+          if (!isHost) {
+            console.log("Connection timed out, attempting to host.");
+            connectAsHost();
+          }
+        }, 6000);
 
         hostConn.on("open", () => {
+          clearTimeout(connectionTimeout); // Stop the timeout, we made it!
           isHost = false;
-          statusEl.textContent = "Connected";
-          statusEl.classList.add("connected");
+          setStatus("Connected", true);
           hostConn.send({ type: "join", id: myPeerId, name: myName });
         });
 
         hostConn.on("data", handleClientData);
 
         hostConn.on("close", () => {
-          statusEl.textContent = "Reconnecting...";
-          statusEl.classList.remove("connected");
+          setStatus("Host disconnected. Reconnecting...");
           resetRoom();
-          // If host leaves, wait a random time to prevent everyone from fighting to be the new host
           setTimeout(connectAsHost, Math.random() * 2000 + 500);
         });
       });
 
       peer.on("error", err => {
         if (err.type === "peer-unavailable") {
-          // Room does not exist yet. Become the room.
-          connectAsHost();
+          clearTimeout(connectionTimeout);
+          connectAsHost(); // Room doesn't exist, I will be the room.
+        } else {
+          setStatus("Network error. Retrying...");
+          setTimeout(connectAsClient, 3000);
         }
       });
 
@@ -300,22 +321,19 @@
 
   function connectAsHost() {
     if (peer) peer.destroy();
-    statusEl.textContent = "Establishing room...";
-    statusEl.classList.remove("connected");
+    setStatus("Establishing room...");
 
     setTimeout(() => {
-      // The host claims the global ROOM_ID
       peer = new Peer(ROOM_ID, PEER_CONFIG);
 
       peer.on("open", id => {
-        myPeerId = id; // id will equal ROOM_ID
+        myPeerId = id; 
         isHost = true;
-        statusEl.textContent = "Connected";
-        statusEl.classList.add("connected");
+        setStatus("Connected", true);
 
         hostClients = [];
         hostRoster = {};
-        hostRoster[myPeerId] = myName; // Add self
+        hostRoster[myPeerId] = myName; 
         renderParticipants();
       });
 
@@ -326,10 +344,8 @@
               hostClients.push(conn);
               hostRoster[data.id] = data.name;
 
-              // Give the new person the full roster so they can make calls
               conn.send({ type: "list", roster: hostRoster });
 
-              // Tell existing people to expect a call
               hostClients.forEach(c => {
                 if (c.peer !== conn.peer) c.send({ type: "new", id: data.id, name: data.name });
               });
@@ -358,7 +374,7 @@
 
       peer.on("error", err => {
         if (err.type === "unavailable-id") {
-          // Someone else beat us to becoming the host. Go back to being a client.
+          // Someone beat us to it.
           connectAsClient();
         }
       });
@@ -373,7 +389,7 @@
       Object.keys(data.roster).forEach(id => {
         if (id !== myPeerId) {
           addRemote(id, data.roster[id], null);
-          callPeer(id); // The new guy makes the outgoing calls
+          callPeer(id); 
         }
       });
       renderParticipants();
@@ -381,7 +397,7 @@
     else if (data.type === "new") {
       if (data.id !== myPeerId) {
         addRemote(data.id, data.name, null);
-        renderParticipants(); // Just wait for the new guy to call us
+        renderParticipants(); 
       }
     } 
     else if (data.type === "name") {
@@ -482,7 +498,6 @@
     `;
     participantsEl.appendChild(meDiv);
 
-    // Host manually adds themselves to UI because they aren't in the connections array
     if (isHost) {
       Object.keys(hostRoster).forEach(id => {
         if (id !== myPeerId && !connections[id]) {
