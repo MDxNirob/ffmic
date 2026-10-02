@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Voice Room</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.1/dist/livekit-client.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1e1f22;
+      color: #dbdee1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      background: #2b2d31;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .topbar .left { font-weight: 600; color: #fff; }
+    .online-count { font-size: 0.85rem; color: #949ba4; }
+    .screen { flex: 1; display: none; flex-direction: column; }
+    .screen.active { display: flex; }
+    .box {
+      max-width: 380px;
+      margin: 30px auto;
+      padding: 24px;
+      background: #2b2d31;
+      border-radius: 12px;
+      text-align: center;
+    }
+    h1 { color: #fff; margin-bottom: 8px; font-size: 1.4rem; }
+    p { color: #949ba4; margin-bottom: 16px; font-size: 0.9rem; }
+    input, select, button {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    input, select { background: #1e1f22; color: #fff; }
+    button {
+      background: #5865f2;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary { background: #4e5058; }
+    button.danger { background: #ed4245; }
+    .mode-btns { display: flex; gap: 10px; margin-bottom: 16px; }
+    .mode-btns button { flex: 1; }
+    #participants {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .person {
+      background: #2b2d31;
+      border-radius: 10px;
+      padding: 12px;
+      text-align: center;
+    }
+    .person.speaking { box-shadow: 0 0 0 3px #23a559; }
+    .av {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: #5865f2;
+      margin: 0 auto 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem; color: #fff;
+    }
+    .name { font-size: 0.85rem; margin-bottom: 6px; }
+    .bottom-bar {
+      background: #2b2d31;
+      padding: 12px;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .bottom-bar button { width: auto; padding: 10px 14px; margin: 0; }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN -->
+  <div id="login" class="screen active">
+    <div class="box">
+      <h1>Voice Room</h1>
+      <p>Choose mode and join</p>
+
+      <div class="mode-btns">
+        <button id="modePeer">Unlimited (PeerJS)</button>
+        <button id="modeLive" class="secondary">LiveKit</button>
+      </div>
+
+      <input type="text" id="nameInput" placeholder="Your name" maxlength="20" />
+      <button id="joinBtn">Join Room</button>
+      <p style="font-size:0.75rem;margin-top:8px" id="modeInfo">Selected: Unlimited PeerJS + ExpressTURN</p>
+    </div>
+  </div>
+
+  <!-- ROOM -->
+  <div id="room" class="screen">
+    <div class="topbar">
+      <div class="left" id="roomTitle">Voice Room</div>
+      <div class="online-count" id="onlineCount">0 online</div>
+    </div>
+    <div id="participants"></div>
+    <div class="bottom-bar">
+      <button class="secondary" id="muteBtn">🎤 Mute</button>
+      <button class="secondary" id="deafenBtn">🔊 Deafen</button>
+      <button class="danger" id="leaveBtn">Leave</button>
+    </div>
+  </div>
+
+<script>
+  // ========== CONFIG ==========
+  const LIVEKIT_URL = "wss://ffmic-43kbick8.livekit.cloud";
+  const TOKEN_URL = "https://ffmic.mdxnirob.workers.dev/";   // your working worker
+  const ROOM_NAME = "main-room";
+
+  // ExpressTURN
+  const TURN_CONFIG = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      {
+        urls: "turn:free.expressturn.com:3478",
+        username: "000000002106201354",
+        credential: "UXvxNY1DQ3mNNPzliqVLL8rHUcY="
+      }
+    ]
+  };
+
+  // ========== STATE ==========
+  let mode = "peer"; // "peer" or "live"
+  let myName = localStorage.getItem("vr_name") || "";
+  let peer = null;
+  let room = null;
+  let localStream = null;
+  let isMuted = false;
+  let isDeafened = false;
+  let connections = {};
+
+  // DOM
+  const login = document.getElementById("login");
+  const roomEl = document.getElementById("room");
+  const nameInput = document.getElementById("nameInput");
+  const joinBtn = document.getElementById("joinBtn");
+  const modePeer = document.getElementById("modePeer");
+  const modeLive = document.getElementById("modeLive");
+  const modeInfo = document.getElementById("modeInfo");
+  const participants = document.getElementById("participants");
+  const onlineCount = document.getElementById("onlineCount");
+  const roomTitle = document.getElementById("roomTitle");
+  const muteBtn = document.getElementById("muteBtn");
+  const deafenBtn = document.getElementById("deafenBtn");
+  const leaveBtn = document.getElementById("leaveBtn");
+
+  if (myName) nameInput.value = myName;
+
+  modePeer.onclick = () => {
+    mode = "peer";
+    modePeer.classList.remove("secondary");
+    modeLive.classList.add("secondary");
+    modeInfo.textContent = "Selected: Unlimited PeerJS + ExpressTURN";
+  };
+  modeLive.onclick = () => {
+    mode = "live";
+    modeLive.classList.remove("secondary");
+    modePeer.classList.add("secondary");
+    modeInfo.textContent = "Selected: LiveKit (better quality)";
+  };
+
+  joinBtn.onclick = start;
+  muteBtn.onclick = toggleMute;
+  deafenBtn.onclick = toggleDeafen;
+  leaveBtn.onclick = leave;
+
+  async function start() {
+    myName = nameInput.value.trim() || "Guest";
+    localStorage.setItem("vr_name", myName);
+
+    login.classList.remove("active");
+    roomEl.classList.add("active");
+    roomTitle.textContent = mode === "peer" ? "Unlimited Room" : "LiveKit Room";
+
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+      if (mode === "peer") {
+        startPeerJS();
+      } else {
+        startLiveKit();
+      }
+    } catch (err) {
+      alert("Microphone error: " + err.message);
+      leave();
+    }
+  }
+
+  // ========== PEERJS + EXPRESS TURN ==========
+  function startPeerJS() {
+    peer = new Peer({
+      config: TURN_CONFIG
+    });
+
+    peer.on("open", (id) => {
+      console.log("My Peer ID:", id);
+      // Simple room: connect to a fixed host ID pattern
+      // For simplicity we use a shared room name approach
+      joinPeerRoom();
+    });
+
+    peer.on("call", (call) => {
+      call.answer(localStream);
+      call.on("stream", (remoteStream) => {
+        addAudio(call.peer, remoteStream);
+      });
+    });
+
+    peer.on("connection", (conn) => {
+      connections[conn.peer] = conn;
+      conn.on("data", handleData);
+    });
+
+    peer.on("error", (err) => console.error(err));
+  }
+
+  function joinPeerRoom() {
+    // Very simple discovery using a fixed peer ID for the room
+    // In real use you would need better signaling
+    const roomHostId = "voiceroom-main"; // fixed for demo
+    // For now just show local user
+    renderPeerParticipants();
+  }
+
+  function addAudio(id, stream) {
+    let audio = document.getElementById("audio-" + id);
+    if (!audio) {
+      audio = document.createElement("audio");
+      audio.id = "audio-" + id;
+      audio.autoplay = true;
+      document.body.appendChild(audio);
+    }
+    audio.srcObject = stream;
+    renderPeerParticipants();
+  }
+
+  function renderPeerParticipants() {
+    participants.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = "person";
+    div.innerHTML = `<div class="av">\( {myName.charAt(0)}</div><div class="name"> \){myName} (you)</div>`;
+    participants.appendChild(div);
+    onlineCount.textContent = "1+ online (PeerJS)";
+  }
+
+  // ========== LIVEKIT ==========
+  async function startLiveKit() {
+    try {
+      const res = await fetch(`\( {TOKEN_URL}?name= \){encodeURIComponent(myName)}&room=${ROOM_NAME}`);
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error("Token server returned invalid response. Check Worker URL.");
+      }
+
+      if (!data.token) throw new Error("No token received");
+
+      room = new LivekitClient.Room();
+      room.on(LivekitClient.RoomEvent.ParticipantConnected, renderLiveParticipants);
+      room.on(LivekitClient.RoomEvent.ParticipantDisconnected, renderLiveParticipants);
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        if (track.kind === "audio") {
+          const el = track.attach();
+          el.id = "audio-" + participant.identity;
+          document.body.appendChild(el);
+        }
+      });
+      room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        document.querySelectorAll(".person").forEach(p => p.classList.remove("speaking"));
+        speakers.forEach(s => {
+          const el = document.getElementById("p-" + s.identity);
+          if (el) el.classList.add("speaking");
+        });
+      });
+
+      await room.connect(LIVEKIT_URL, data.token);
+      await room.localParticipant.setMicrophoneEnabled(true);
+      renderLiveParticipants();
+    } catch (err) {
+      alert("LiveKit join failed: " + err.message);
+      console.error(err);
+      leave();
+    }
+  }
+
+  function renderLiveParticipants() {
+    if (!room) return;
+    participants.innerHTML = "";
+    const all = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
+    onlineCount.textContent = all.length + " online";
+
+    all.forEach(p => {
+      const div = document.createElement("div");
+      div.className = "person";
+      div.id = "p-" + p.identity;
+      const name = p === room.localParticipant ? myName : (p.name || p.identity);
+      div.innerHTML = `<div class="av">\( {name.charAt(0).toUpperCase()}</div><div class="name"> \){name}</div>`;
+      participants.appendChild(div);
+    });
+  }
+
+  // ========== COMMON ==========
+  function toggleMute() {
+    isMuted = !isMuted;
+    if (localStream) {
+      localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+    }
+    if (room) room.localParticipant.setMicrophoneEnabled(!isMuted);
+    muteBtn.textContent = isMuted ? "🎤 Unmute" : "🎤 Mute";
+  }
+
+  function toggleDeafen() {
+    isDeafened = !isDeafened;
+    document.querySelectorAll("audio").forEach(a => a.muted = isDeafened);
+    deafenBtn.textContent = isDeafened ? "🔊 Undeafen" : "🔊 Deafen";
+  }
+
+  function leave() {
+    if (peer) peer.destroy();
+    if (room) room.disconnect();
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    location.reload();
+  }
+
+  function handleData(data) {
+    // for future emoji / chat
+  }
+</script>
+</body>
+  </html>
