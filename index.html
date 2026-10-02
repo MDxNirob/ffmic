@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Voice Room</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.1/dist/livekit-client.umd.min.js"></script>
+<style>
+:root {
+  --bg: #313338;
+  --sidebar: #2b2d31;
+  --dark: #1e1f22;
+  --blurple: #5865f2;
+  --green: #23a559;
+  --red: #ed4245;
+  --text: #dbdee1;
+  --muted: #949ba4;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+#login {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--dark);
+}
+.card {
+  background: var(--sidebar);
+  width: 100%;
+  max-width: 420px;
+  border-radius: 8px;
+  padding: 28px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.card h1 { color:#fff; font-size:22px; text-align:center; margin-bottom:6px; }
+.card p { color:var(--muted); font-size:14px; text-align:center; margin-bottom:20px; }
+.mode-row { display:flex; gap:8px; margin-bottom:16px; }
+.mode-row button {
+  flex:1; padding:10px; border:none; border-radius:4px;
+  font-weight:600; font-size:13px; cursor:pointer;
+  background:var(--dark); color:var(--text);
+}
+.mode-row button.active { background:var(--blurple); color:#fff; }
+.avatar-upload {
+  width:80px; height:80px; border-radius:50%;
+  background:var(--blurple); margin:0 auto 16px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:28px; color:#fff; overflow:hidden; cursor:pointer;
+  position:relative;
+}
+.avatar-upload img { width:100%; height:100%; object-fit:cover; }
+.avatar-upload input { position:absolute; inset:0; opacity:0; cursor:pointer; }
+input[type=text], select {
+  width:100%; padding:12px; background:var(--dark);
+  border:none; border-radius:4px; color:#fff; font-size:15px;
+  margin-bottom:12px;
+}
+input:focus, select:focus { outline:2px solid var(--blurple); }
+.btn {
+  width:100%; padding:12px; background:var(--blurple);
+  color:#fff; border:none; border-radius:4px;
+  font-size:15px; font-weight:600; cursor:pointer;
+}
+.btn:hover { background:#4752c4; }
+.hint { margin-top:12px; font-size:12px; color:var(--muted); text-align:center; }
+
+#room { display:none; flex-direction:column; height:100vh; }
+.topbar {
+  background:var(--sidebar); height:48px; padding:0 16px;
+  display:flex; align-items:center; justify-content:space-between;
+  border-bottom:1px solid var(--dark);
+}
+.topbar .title { font-weight:600; color:#fff; font-size:15px; }
+.topbar .online { font-size:13px; color:var(--muted); }
+
+#participants {
+  flex:1; padding:16px; overflow-y:auto;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:12px; align-content:start;
+}
+.member {
+  background:var(--sidebar); border-radius:8px;
+  padding:16px 12px; text-align:center;
+  transition:box-shadow .15s; position:relative;
+}
+.member.speaking { box-shadow:0 0 0 3px var(--green); }
+.av {
+  width:64px; height:64px; border-radius:50%;
+  background:var(--blurple); margin:0 auto 10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:24px; font-weight:600; color:#fff;
+  overflow:hidden; position:relative;
+}
+.av img { width:100%; height:100%; object-fit:cover; }
+.av .emoji {
+  position:absolute; bottom:-2px; right:-2px;
+  font-size:18px; background:var(--sidebar);
+  border-radius:50%; padding:1px 3px;
+}
+.member-name { font-size:14px; font-weight:500; color:#fff; }
+.you-tag { font-size:11px; color:var(--muted); }
+.vol-row { margin-top:8px; display:flex; align-items:center; gap:6px; justify-content:center; }
+.vol-row input[type=range] { width:70px; }
+
+.bottom-bar {
+  background:var(--sidebar); padding:12px 16px;
+  display:flex; justify-content:center; gap:10px; flex-wrap:wrap;
+  border-top:1px solid var(--dark);
+}
+.ctrl {
+  width:44px; height:44px; border-radius:50%; border:none;
+  background:var(--dark); color:#fff; font-size:18px;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+}
+.ctrl:hover { background:#3f4147; }
+.ctrl.danger { background:var(--red); }
+.ctrl.active { background:var(--red); }
+
+.panel {
+  position:fixed; bottom:80px; left:12px; right:12px;
+  background:var(--sidebar); border-radius:12px;
+  padding:16px; z-index:50; max-height:55vh; overflow-y:auto;
+  display:none; box-shadow:0 8px 30px rgba(0,0,0,.5);
+}
+.panel h3 { color:#fff; margin-bottom:12px; font-size:15px; }
+.voice-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:8px;
+}
+.voice-btn {
+  padding:10px; background:var(--dark); border:none;
+  color:#fff; border-radius:6px; cursor:pointer; font-size:13px;
+}
+.voice-btn.active { background:var(--blurple); }
+.panel-close {
+  margin-top:12px; width:100%; padding:10px;
+  background:var(--dark); border:none; color:#fff;
+  border-radius:6px; cursor:pointer;
+}
+.status {
+  position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,.8); color:#fff; padding:8px 16px;
+  border-radius:20px; font-size:13px; display:none; z-index:100;
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login">
+  <div class="card">
+    <h1>Voice Room</h1>
+    <p>Choose mode • Add photo • Join</p>
+
+    <div class="mode-row">
+      <button id="btnPeer" class="active">Unlimited</button>
+      <button id="btnLive">LiveKit</button>
+    </div>
+
+    <div class="avatar-upload" id="avatarBox">
+      <span id="avatarLetter">?</span>
+      <input type="file" id="photoInput" accept="image/*" />
+    </div>
+
+    <input type="text" id="nameInput" placeholder="Display name" maxlength="20" />
+    <button class="btn" id="joinBtn">Join Voice Room</button>
+    <div class="hint" id="modeHint">Unlimited = PeerJS + ExpressTURN (no minute limit)</div>
+  </div>
+</div>
+
+<!-- ROOM -->
+<div id="room">
+  <div class="topbar">
+    <div class="title" id="roomTitle">Voice Room</div>
+    <div class="online" id="onlineText">0 online</div>
+  </div>
+
+  <div id="participants"></div>
+
+  <div class="bottom-bar">
+    <button class="ctrl" id="muteBtn" title="Mute">🎤</button>
+    <button class="ctrl" id="deafenBtn" title="Deafen">🔊</button>
+    <button class="ctrl" id="camBtn" title="Camera">📷</button>
+    <button class="ctrl" id="voiceBtn" title="Voice Changer">🎙️</button>
+    <button class="ctrl" id="qualityBtn" title="Video Quality">⚙️</button>
+    <button class="ctrl danger" id="leaveBtn">Leave</button>
+  </div>
+</div>
+
+<!-- Voice Changer Panel -->
+<div class="panel" id="voicePanel">
+  <h3>Voice Changer</h3>
+  <div class="voice-grid" id="voiceGrid"></div>
+  <button class="panel-close" id="closeVoice">Close</button>
+</div>
+
+<!-- Quality Panel -->
+<div class="panel" id="qualityPanel">
+  <h3>Video Quality</h3>
+  <select id="qualitySelect">
+    <option value="360">360p</option>
+    <option value="720" selected>720p</option>
+    <option value="1080">1080p</option>
+  </select>
+  <button class="panel-close" id="closeQuality">Close</button>
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+// ================= CONFIG =================
+const LIVEKIT_URL = "wss://ffmic-43kbick8.livekit.cloud";
+const TOKEN_URL   = "https://ffmic.mdxnirob.workers.dev/";
+const ROOM_NAME   = "main-room";
+
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:free.expressturn.com:3478",
+      username: "000000002106201354",
+      credential: "UXvxNY1DQ3mNNPzliqVLL8rHUcY="
+    }
+  ]
+};
+
+const VOICE_PRESETS = [
+  { name: "Normal", pitch: 1.0 },
+  { name: "Kid", pitch: 1.5 },
+  { name: "Boy", pitch: 1.25 },
+  { name: "Girl", pitch: 1.4 },
+  { name: "Adult Male", pitch: 0.85 },
+  { name: "Adult Female", pitch: 1.15 },
+  { name: "Deep", pitch: 0.7 },
+  { name: "Helium", pitch: 1.65 },
+  { name: "Robot", pitch: 1.0 },
+  { name: "Monster", pitch: 0.55 },
+  { name: "Radio", pitch: 0.95 },
+  { name: "Chipmunk", pitch: 1.8 }
+];
+
+// ================= STATE =================
+let mode = "peer";
+let myName = localStorage.getItem("vr_name") || "";
+let myAvatar = localStorage.getItem("vr_avatar") || "";
+let localStream = null;
+let localVideoTrack = null;
+let isMuted = false;
+let isDeafened = false;
+let isCamOn = false;
+let videoQuality = "720";
+let currentPitch = 1.0;
+
+let peer = null;
+let lkRoom = null;
+
+// ================= DOM =================
+const loginEl = document.getElementById("login");
+const roomEl = document.getElementById("room");
+const nameInput = document.getElementById("nameInput");
+const photoInput = document.getElementById("photoInput");
+const avatarBox = document.getElementById("avatarBox");
+const avatarLetter = document.getElementById("avatarLetter");
+const joinBtn = document.getElementById("joinBtn");
+const btnPeer = document.getElementById("btnPeer");
+const btnLive = document.getElementById("btnLive");
+const modeHint = document.getElementById("modeHint");
+const participants = document.getElementById("participants");
+const onlineText = document.getElementById("onlineText");
+const roomTitle = document.getElementById("roomTitle");
+const muteBtn = document.getElementById("muteBtn");
+const deafenBtn = document.getElementById("deafenBtn");
+const camBtn = document.getElementById("camBtn");
+const voiceBtn = document.getElementById("voiceBtn");
+const qualityBtn = document.getElementById("qualityBtn");
+const leaveBtn = document.getElementById("leaveBtn");
+const voicePanel = document.getElementById("voicePanel");
+const qualityPanel = document.getElementById("qualityPanel");
+const voiceGrid = document.getElementById("voiceGrid");
+const qualitySelect = document.getElementById("qualitySelect");
+const statusEl = document.getElementById("status");
+
+if (myName) nameInput.value = myName;
+if (myAvatar) {
+  avatarBox.innerHTML = `<img src="${myAvatar}"><input type="file" id="photoInput" accept="image/*">`;
+  document.getElementById("photoInput").onchange = handlePhoto;
+} else {
+  photoInput.onchange = handlePhoto;
+}
+
+function handlePhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    myAvatar = reader.result;
+    localStorage.setItem("vr_avatar", myAvatar);
+    avatarBox.innerHTML = `<img src="${myAvatar}"><input type="file" id="photoInput" accept="image/*">`;
+    document.getElementById("photoInput").onchange = handlePhoto;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Mode switch
+btnPeer.onclick = () => {
+  mode = "peer";
+  btnPeer.classList.add("active");
+  btnLive.classList.remove("active");
+  modeHint.textContent = "Unlimited = PeerJS + ExpressTURN (no minute limit)";
+};
+btnLive.onclick = () => {
+  mode = "live";
+  btnLive.classList.add("active");
+  btnPeer.classList.remove("active");
+  modeHint.textContent = "LiveKit = better quality, has monthly minute limit";
+};
+
+// Build voice buttons
+VOICE_PRESETS.forEach((p, i) => {
+  const b = document.createElement("button");
+  b.className = "voice-btn" + (i === 0 ? " active" : "");
+  b.textContent = p.name;
+  b.onclick = () => {
+    document.querySelectorAll(".voice-btn").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    currentPitch = p.pitch;
+    showStatus("Voice: " + p.name);
+  };
+  voiceGrid.appendChild(b);
+});
+
+joinBtn.onclick = join;
+muteBtn.onclick = toggleMute;
+deafenBtn.onclick = toggleDeafen;
+camBtn.onclick = toggleCam;
+voiceBtn.onclick = () => {
+  voicePanel.style.display = voicePanel.style.display === "block" ? "none" : "block";
+  qualityPanel.style.display = "none";
+};
+qualityBtn.onclick = () => {
+  qualityPanel.style.display = qualityPanel.style.display === "block" ? "none" : "block";
+  voicePanel.style.display = "none";
+};
+document.getElementById("closeVoice").onclick = () => voicePanel.style.display = "none";
+document.getElementById("closeQuality").onclick = () => qualityPanel.style.display = "none";
+qualitySelect.onchange = () => { videoQuality = qualitySelect.value; };
+leaveBtn.onclick = leave;
+
+function showStatus(msg) {
+  statusEl.textContent = msg;
+  statusEl.style.display = "block";
+  setTimeout(() => statusEl.style.display = "none", 2200);
+}
+
+// ================= JOIN =================
+async function join() {
+  myName = (nameInput.value || "").trim() || "Guest";
+  localStorage.setItem("vr_name", myName);
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+  } catch (e) {
+    alert("Microphone permission needed");
+    return;
+  }
+
+  loginEl.style.display = "none";
+  roomEl.style.display = "flex";
+  roomTitle.textContent = mode === "peer" ? "Unlimited Room" : "LiveKit Room";
+
+  if (mode === "peer") startPeer();
+  else startLiveKit();
+}
+
+// ================= PEERJS =================
+function startPeer() {
+  peer = new Peer({ config: ICE_CONFIG });
+  peer.on("open", id => {
+    console.log("Peer ID:", id);
+    renderPeer();
+    showStatus("Connected (Unlimited)");
+  });
+  peer.on("call", call => {
+    call.answer(localStream);
+    call.on("stream", stream => {
+      playAudio(call.peer, stream);
+      renderPeer();
+    });
+  });
+  peer.on("error", e => console.error(e));
+}
+
+function renderPeer() {
+  participants.innerHTML = "";
+  const div = createCard(myName, true, myAvatar);
+  participants.appendChild(div);
+  onlineText.textContent = "1 online";
+}
+
+// ================= LIVEKIT =================
+async function startLiveKit() {
+  try {
+    const res = await fetch(TOKEN_URL + "?name=" + encodeURIComponent(myName) + "&room=" + ROOM_NAME);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch(e) { throw new Error("Bad token response"); }
+    if (!data.token) throw new Error("No token");
+
+    lkRoom = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+
+    lkRoom.on(LivekitClient.RoomEvent.ParticipantConnected, renderLive);
+    lkRoom.on(LivekitClient.RoomEvent.ParticipantDisconnected, renderLive);
+    lkRoom.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, speakers => {
+      document.querySelectorAll(".member").forEach(m => m.classList.remove("speaking"));
+      speakers.forEach(s => {
+        const el = document.getElementById("m-" + s.identity);
+        if (el) el.classList.add("speaking");
+      });
+    });
+    lkRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+      if (track.kind === "audio") {
+        const el = track.attach();
+        el.id = "audio-" + participant.identity;
+        el.autoplay = true;
+        document.body.appendChild(el);
+      }
+      if (track.kind === "video") renderLive();
+    });
+
+    await lkRoom.connect(LIVEKIT_URL, data.token);
+    await lkRoom.localParticipant.setMicrophoneEnabled(true);
+    renderLive();
+    showStatus("Connected to LiveKit");
+  } catch (err) {
+    alert("LiveKit error: " + err.message);
+    leave();
+  }
+}
+
+function renderLive() {
+  if (!lkRoom) return;
+  participants.innerHTML = "";
+  const all = [lkRoom.localParticipant, ...Array.from(lkRoom.remoteParticipants.values())];
+  onlineText.textContent = all.length + " online";
+
+  all.forEach(p => {
+    const isLocal = p === lkRoom.localParticipant;
+    const name = isLocal ? myName : (p.name || p.identity);
+    const avatar = isLocal ? myAvatar : "";
+    const div = createCard(name, isLocal, avatar);
+    div.id = "m-" + p.identity;
+
+    // volume control for remote
+    if (!isLocal) {
+      const vol = document.createElement("div");
+      vol.className = "vol-row";
+      vol.innerHTML = `<input type="range" min="0" max="1" step="0.05" value="1">`;
+      vol.querySelector("input").oninput = (e) => {
+        const a = document.getElementById("audio-" + p.identity);
+        if (a) a.volume = e.target.value;
+      };
+      div.appendChild(vol);
+    }
+    participants.appendChild(div);
+  });
+}
+
+// ================= HELPERS =================
+function createCard(name, isLocal, avatarUrl) {
+  const div = document.createElement("div");
+  div.className = "member";
+  const initial = (name || "?").charAt(0).toUpperCase();
+  let avContent = initial;
+  if (avatarUrl) avContent = `<img src="${avatarUrl}">`;
+  div.innerHTML = `
+    <div class="av">${avContent}<span class="emoji"></span></div>
+    <div class="member-name">${name}</div>
+    ${isLocal ? '<div class="you-tag">you</div>' : ''}
+  `;
+  return div;
+}
+
+function playAudio(id, stream) {
+  let a = document.getElementById("audio-" + id);
+  if (!a) {
+    a = document.createElement("audio");
+    a.id = "audio-" + id;
+    a.autoplay = true;
+    document.body.appendChild(a);
+  }
+  a.srcObject = stream;
+}
+
+function toggleMute() {
+  isMuted = !isMuted;
+  if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+  if (lkRoom) lkRoom.localParticipant.setMicrophoneEnabled(!isMuted);
+  muteBtn.classList.toggle("active", isMuted);
+  muteBtn.textContent = isMuted ? "🔇" : "🎤";
+  showStatus(isMuted ? "Muted" : "Unmuted");
+}
+
+function toggleDeafen() {
+  isDeafened = !isDeafened;
+  document.querySelectorAll("audio").forEach(a => a.muted = isDeafened);
+  deafenBtn.classList.toggle("active", isDeafened);
+  deafenBtn.textContent = isDeafened ? "🔇" : "🔊";
+  showStatus(isDeafened ? "Deafened" : "Undeafened");
+}
+
+async function toggleCam() {
+  if (!isCamOn) {
+    try {
+      const constraints = {
+        video: {
+          width: videoQuality === "1080" ? 1920 : videoQuality === "720" ? 1280 : 640,
+          height: videoQuality === "1080" ? 1080 : videoQuality === "720" ? 720 : 360
+        }
+      };
+      const vStream = await navigator.mediaDevices.getUserMedia(constraints);
+      localVideoTrack = vStream.getVideoTracks()[0];
+      if (lkRoom) {
+        await lkRoom.localParticipant.publishTrack(localVideoTrack);
+      }
+      isCamOn = true;
+      camBtn.classList.add("active");
+      showStatus("Camera on (" + videoQuality + "p)");
+    } catch (e) {
+      alert("Camera error: " + e.message);
+    }
+  } else {
+    if (localVideoTrack) {
+      localVideoTrack.stop();
+      if (lkRoom) {
+        const pub = lkRoom.localParticipant.getTrackPublication(localVideoTrack);
+        if (pub) await lkRoom.localParticipant.unpublishTrack(localVideoTrack);
+      }
+      localVideoTrack = null;
+    }
+    isCamOn = false;
+    camBtn.classList.remove("active");
+    showStatus("Camera off");
+  }
+}
+
+function leave() {
+  if (peer) peer.destroy();
+  if (lkRoom) lkRoom.disconnect();
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  if (localVideoTrack) localVideoTrack.stop();
+  document.querySelectorAll("audio").forEach(a => a.remove());
+  location.reload();
+}
+</script>
+</body>
+  </html>
